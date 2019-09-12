@@ -4,10 +4,7 @@ Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is su
 """
 
 
-from ibapi.object_implem import Object
-
- 
-class SoftDollarTier(Object):
+class SoftDollarTier(object):
     def __init__(self, name = "", val = "", displayName = ""):
         self.name = name
         self.val = val

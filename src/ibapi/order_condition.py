@@ -6,7 +6,6 @@ Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is su
 
 from ibapi import comm
 from ibapi.common import UNSET_DOUBLE
-from ibapi.object_implem import Object
 from ibapi.enum_implem import Enum
 from ibapi.utils import decode
 
@@ -14,7 +13,7 @@ from ibapi.utils import decode
 
 
  
-class OrderCondition(Object):
+class OrderCondition(object):
     Price = 1
     Time = 3
     Margin = 4

@@ -3,11 +3,7 @@ Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is su
  and conditions of the IB API Non-Commercial License or the IB API Commercial License, as applicable.
 """
 
-
-
-from ibapi.object_implem import Object
-
-class Execution(Object):
+class Execution(object):
 
     def __init__(self):
         self.execId = ""
@@ -36,7 +32,7 @@ class Execution(Object):
                 self.exchange, self.side, self.shares, self.price, self.permId, self.clientId, self.orderId, self.liquidation,
                 self.cumQty, self.avgPrice, self.orderRef, self.evRule, self.evMultiplier, self.modelCode, self.lastLiquidity)
 
-class ExecutionFilter(Object):
+class ExecutionFilter(object):
 
     # Filter fields
     def __init__(self):

@@ -8,10 +8,8 @@ Simple class mapping a tag to a value. Both of them are strings.
 They are used in a list to convey extra info with the requests.
 """
 
-from ibapi.object_implem import Object
 
-
-class TagValue(Object):
+class TagValue(object):
     def __init__(self, tag:str=None, value:str=None):
         self.tag = str(tag)
         self.value = str(value)

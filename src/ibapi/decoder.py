@@ -26,7 +26,7 @@ from ibapi.orderdecoder import OrderDecoder
 logger = logging.getLogger(__name__)
 
 
-class HandleInfo(Object):
+class HandleInfo(object):
     def __init__(self, wrap=None, proc=None):
         self.wrapperMeth = wrap
         self.wrapperParams = None
@@ -40,7 +40,7 @@ class HandleInfo(Object):
         return s
 
 
-class Decoder(Object):
+class Decoder(object):
     def __init__(self, wrapper, serverVersion):
         self.wrapper = wrapper
         self.serverVersion = serverVersion

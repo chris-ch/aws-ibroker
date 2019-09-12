@@ -34,7 +34,7 @@ from ibapi.commission_report import CommissionReport
 logger = logging.getLogger(__name__)
 
 
-class EWrapper:
+class EWrapper(object):
     def __init__(self):
         pass
 

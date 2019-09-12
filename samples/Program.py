@@ -69,11 +69,12 @@ def printWhenExecuting(fn):
 
     return fn2
 
-def printinstance(inst:Object):
+def printinstance(inst):
     attrs = vars(inst)
     print(', '.join("%s: %s" % item for item in attrs.items()))
 
-class Activity(Object):
+
+class Activity(object):
     def __init__(self, reqMsgId, ansMsgId, ansEndMsgId, reqId):
         self.reqMsdId = reqMsgId
         self.ansMsgId = ansMsgId
@@ -81,7 +82,7 @@ class Activity(Object):
         self.reqId = reqId
 
 
-class RequestMgr(Object):
+class RequestMgr(object):
     def __init__(self):
         # I will keep this simple even if slower for now: only one list of
         # requests finding will be done by linear search

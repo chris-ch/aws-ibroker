@@ -6,7 +6,6 @@ Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is su
 import sys
 
 from ibapi.enum_implem import Enum
-from ibapi.object_implem import Object
 
 
 NO_VALID_ID = -1
@@ -43,7 +42,7 @@ ListOfHistoricalTick = list
 ListOfHistoricalTickBidAsk = list
 ListOfHistoricalTickLast = list
 
-class BarData(Object):
+class BarData(object):
     def __init__(self):
         self.date = ""
         self.open = 0.
@@ -58,7 +57,7 @@ class BarData(Object):
         return "Date: %s, Open: %f, High: %f, Low: %f, Close: %f, Volume: %d, Average: %f, BarCount: %d" % (self.date, self.open, self.high,
             self.low, self.close, self.volume, self.average, self.barCount)
 
-class RealTimeBar(Object):
+class RealTimeBar(object):
     def __init__(self, time = 0, endTime = -1, open_ = 0., high = 0., low = 0., close = 0., volume = 0., wap = 0., count = 0):
         self.time = time
         self.endTime = endTime
@@ -74,7 +73,7 @@ class RealTimeBar(Object):
         return "Time: %d, Open: %f, High: %f, Low: %f, Close: %f, Volume: %d, WAP: %f, Count: %d" % (self.time, self.open_, self.high,
             self.low, self.close, self.volume, self.wap, self.count)
 
-class HistogramData(Object):
+class HistogramData(object):
     def __init__(self):
         self.price = 0.
         self.count = 0
@@ -82,7 +81,7 @@ class HistogramData(Object):
     def __str__(self):
         return "Price: %f, Count: %d" % (self.price, self.count)
 
-class NewsProvider(Object):
+class NewsProvider(object):
     def __init__(self):
         self.code = ""
         self.name = ""
@@ -90,7 +89,7 @@ class NewsProvider(Object):
     def __str__(self):
         return "Code: %s, Name: %s" % (self.code, self.name)
 
-class DepthMktDataDescription(Object):
+class DepthMktDataDescription(object):
     def __init__(self):
         self.exchange = ""
         self.secType = ""
@@ -105,7 +104,7 @@ class DepthMktDataDescription(Object):
             aggGroup = ""
         return "Exchange: %s, SecType: %s, ListingExchange: %s, ServiceDataType: %s, AggGroup: %s, " % (self.exchange, self.secType, self.listingExch,self.serviceDataType, aggGroup)
 
-class SmartComponent(Object):
+class SmartComponent(object):
     def __init__(self):
         self.bitNumber = 0
         self.exchange = ""
@@ -114,7 +113,7 @@ class SmartComponent(Object):
     def __str__(self):
         return "BitNumber: %d, Exchange: %s, ExchangeLetter: %s" % (self.bitNumber, self.exchange, self.exchangeLetter)
 
-class TickAttrib(Object):
+class TickAttrib(object):
     def __init__(self):
         self.canAutoExecute = False
         self.pastLimit = False
@@ -123,7 +122,7 @@ class TickAttrib(Object):
     def __str__(self):
         return "CanAutoExecute: %d, PastLimit: %d, PreOpen: %d" % (self.canAutoExecute, self.pastLimit, self.preOpen)
 
-class TickAttribBidAsk(Object):
+class TickAttribBidAsk(object):
     def __init__(self):
         self.bidPastLow = False
         self.askPastHigh = False
@@ -131,7 +130,7 @@ class TickAttribBidAsk(Object):
     def __str__(self):
         return "BidPastLow: %d, AskPastHigh: %d" % (self.bidPastLow, self.askPastHigh)
 
-class TickAttribLast(Object):
+class TickAttribLast(object):
     def __init__(self):
         self.pastLimit = False
         self.unreported = False
@@ -139,7 +138,7 @@ class TickAttribLast(Object):
     def __str__(self):
         return "PastLimit: %d, Unreported: %d" % (self.pastLimit, self.unreported)
 
-class FamilyCode(Object):
+class FamilyCode(object):
     def __init__(self):
         self.accountID = ""
         self.familyCodeStr = ""
@@ -147,7 +146,7 @@ class FamilyCode(Object):
     def __str__(self):
         return "AccountId: %s, FamilyCodeStr: %s" % (self.accountID, self.familyCodeStr)
 
-class PriceIncrement(Object):
+class PriceIncrement(object):
     def __init__(self):
         self.lowEdge = 0.
         self.increment = 0.
@@ -155,7 +154,7 @@ class PriceIncrement(Object):
     def __str__(self):
         return "LowEdge: %f, Increment: %f" % (self.lowEdge, self.increment)
 
-class HistoricalTick(Object):
+class HistoricalTick(object):
     def __init__(self):
         self.time = 0
         self.price = 0.
@@ -164,7 +163,7 @@ class HistoricalTick(Object):
     def __str__(self):
         return "Time: %d, Price: %f, Size: %d" % (self.time, self.price, self.size)
 
-class HistoricalTickBidAsk(Object):
+class HistoricalTickBidAsk(object):
     def __init__(self):
         self.time = 0
         self.tickAttribBidAsk = TickAttribBidAsk()
@@ -176,7 +175,7 @@ class HistoricalTickBidAsk(Object):
     def __str__(self):
         return "Time: %d, TickAttriBidAsk: %s, PriceBid: %f, PriceAsk: %f, SizeBid: %d, SizeAsk: %d" % (self.time, self.tickAttribBidAsk, self.priceBid, self.priceAsk, self.sizeBid, self.sizeAsk)
 
-class HistoricalTickLast(Object):
+class HistoricalTickLast(object):
     def __init__(self):
         self.time = 0
         self.tickAttribLast = TickAttribLast()

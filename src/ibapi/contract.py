@@ -12,19 +12,16 @@ Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is su
 """
 
 
-from ibapi.object_implem import Object
-
-
 (SAME_POS, OPEN_POS, CLOSE_POS, UNKNOWN_POS) = range(4)
 
 
-class ComboLeg(Object):
+class ComboLeg(object):
     def __init__(self):
-        self.conId = 0  # type: int
-        self.ratio = 0  # type: int
+        self.conId = 0  # type  int
+        self.ratio = 0  # type  int
         self.action = ""      # BUY/SELL/SSHORT
         self.exchange = ""
-        self.openClose = 0   # type: int; LegOpenClose enum values
+        self.openClose = 0   # type  int; LegOpenClose enum values
         # for stock legs when doing short sale
         self.shortSaleSlot = 0
         self.designatedLocation = ""
@@ -43,11 +40,11 @@ class ComboLeg(Object):
             str(self.exemptCode)))
 
 
-class DeltaNeutralContract(Object):
+class DeltaNeutralContract(object):
     def __init__(self):
-        self.conId = 0   # type: int
-        self.delta = 0.  # type: float
-        self.price = 0.  # type: float
+        self.conId = 0   # type  int
+        self.delta = 0.  # type  float
+        self.price = 0.  # type  float
 
     def __str__(self):
         return ",".join((
@@ -56,7 +53,7 @@ class DeltaNeutralContract(Object):
             str(self.price)))
 
 
-class Contract(Object):
+class Contract(object):
     def __init__(self):
         self.conId = 0
         self.symbol = ""
@@ -75,8 +72,8 @@ class Contract(Object):
         self.secId = ""
 
         #combos
-        self.comboLegsDescrip = ""  # type: str; received in open order 14 and up for all combos
-        self.comboLegs = None     # type: list<ComboLeg>
+        self.comboLegsDescrip = ""  # type  str,received in open order 14 and up for all combos
+        self.comboLegs = None     # type  list<ComboLeg>
         self.deltaNeutralContract = None
 
 
@@ -109,7 +106,7 @@ class Contract(Object):
         return s
 
 
-class ContractDetails(Object):
+class ContractDetails(object):
     def __init__(self):
         self.contract = Contract()
         self.marketName = ""
@@ -197,9 +194,9 @@ class ContractDetails(Object):
         return s
 
 
-class ContractDescription(Object):
+class ContractDescription(object):
     def __init__(self):
         self.contract = Contract()
-        self.derivativeSecTypes = None   # type: list of strings
+        self.derivativeSecTypes = None   # type  list of strings
 
 

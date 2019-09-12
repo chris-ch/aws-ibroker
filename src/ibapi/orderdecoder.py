@@ -4,7 +4,6 @@ Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is su
 """
 
 from ibapi import order_condition
-from ibapi.object_implem import Object
 from ibapi.utils import * # @UnusedWildImport
 from ibapi.server_versions import * # @UnusedWildImport
 from ibapi.order import OrderComboLeg
@@ -15,7 +14,7 @@ from ibapi.softdollartier import SoftDollarTier
 
 logger = logging.getLogger(__name__)
 
-class OrderDecoder(Object):
+class OrderDecoder(object):
     def __init__(self, contract, order, orderState, version, serverVersion):
         self.contract = contract
         self.order = order

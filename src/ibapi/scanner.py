@@ -4,11 +4,10 @@ Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is su
 """
 
 
-from ibapi.object_implem import Object
 from ibapi.common import UNSET_INTEGER, UNSET_DOUBLE
 
 
-class ScanData(Object):
+class ScanData(object):
     def __init__(self, contract = None, rank = 0, distance = "", benchmark = "", projection = "", legsStr = ""):
         self.contract = contract
         self.rank = rank
@@ -24,7 +23,8 @@ class ScanData(Object):
  
 NO_ROW_NUMBER_SPECIFIED = -1
 
-class ScannerSubscription(Object):
+
+class ScannerSubscription(object):
 
     def __init__(self):
         self.numberOfRows = NO_ROW_NUMBER_SPECIFIED
