@@ -1,0 +1,23 @@
+version: '3.7'
+
+services:
+  tws:
+    image: interactivebroker-gateway:v974
+
+    env_file:
+      - ./config/secrets.conf
+
+    ports:
+      # Gateway API connection
+      - "4003:4003"
+      # VNC
+      - "5901:5900"
+
+    volumes:
+      - ./config/IBController.ini:/root/IBController/IBController.ini
+      - ./config/jts.ini:/root/Jts/jts.ini
+
+    environment:
+      - TZ=America/Chicago
+      - VNC_PASSWORD=1234 # CHANGE ME
+      - TRADING_MODE=paper # either paper or live
