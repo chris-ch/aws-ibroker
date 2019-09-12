@@ -11,7 +11,7 @@ from ibapi import order_condition
 from ibapi.order_condition import * # @UnusedWildImport
 
 
-class OrderSamples:
+class OrderSamples(object):
 
     """ <summary>
     #/ An auction order is entered into the electronic trading system during the pre-market opening period for execution at the 

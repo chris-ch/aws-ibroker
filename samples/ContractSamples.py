@@ -6,7 +6,7 @@ Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is su
 from ibapi.contract import * # @UnusedWildImport
 
 
-class ContractSamples:
+class ContractSamples(object):
 
     """ Usually, the easiest way to define a Stock/CASH contract is through 
     these four attributes.  """
@@ -612,47 +612,47 @@ class ContractSamples:
     @staticmethod
     def USStockCFD():
         # ! [usstockcfd_conract]
-        contract = Contract();
-        contract.symbol = "IBM";
-        contract.secType = "CFD";
-        contract.currency = "USD";
-        contract.exchange = "SMART";
+        contract = Contract()
+        contract.symbol = "IBM"
+        contract.secType = "CFD"
+        contract.currency = "USD"
+        contract.exchange = "SMART"
         # ! [usstockcfd_conract]
-        return contract;
+        return contract
 
     @staticmethod
     def EuropeanStockCFD():
         # ! [europeanstockcfd_contract]
-        contract = Contract();
-        contract.symbol = "BMW";
-        contract.secType = "CFD";
-        contract.currency = "EUR";
-        contract.exchange = "SMART";
+        contract = Contract()
+        contract.symbol = "BMW"
+        contract.secType = "CFD"
+        contract.currency = "EUR"
+        contract.exchange = "SMART"
         # ! [europeanstockcfd_contract]
-        return contract;
+        return contract
 
     @staticmethod
     def CashCFD():
         # ! [cashcfd_contract]
-        contract = Contract();
-        contract.symbol = "EUR";
-        contract.secType = "CFD";
-        contract.currency = "USD";
-        contract.exchange = "SMART";
+        contract = Contract()
+        contract.symbol = "EUR"
+        contract.secType = "CFD"
+        contract.currency = "USD"
+        contract.exchange = "SMART"
         # ! [cashcfd_contract]
-        return contract;
+        return contract
 
     @staticmethod
     def QBAlgoContract():
         # ! [qbalgo_contract]
         contract = Contract()
-        contract.symbol = "ES";
-        contract.secType = "FUT";
-        contract.exchange = "QBALGO";
-        contract.currency = "USD";
-        contract.lastTradeDateOrContractMonth = "202003";
+        contract.symbol = "ES"
+        contract.secType = "FUT"
+        contract.exchange = "QBALGO"
+        contract.currency = "USD"
+        contract.lastTradeDateOrContractMonth = "202003"
         # ! [qbalgo_contract]
-        return contract;  
+        return contract
 
 def Test():
     from ibapi.utils import ExerciseStaticMethods

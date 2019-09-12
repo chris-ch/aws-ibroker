@@ -3,12 +3,11 @@ Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is su
  and conditions of the IB API Non-Commercial License or the IB API Commercial License, as applicable.
 """
 
-from ibapi.object_implem import Object
 from ibapi.tag_value import TagValue
 from ibapi.order import Order
 
 
-class AvailableAlgoParams(Object):
+class AvailableAlgoParams(object):
 
     # ! [scale_params]
     @staticmethod

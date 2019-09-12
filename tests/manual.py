@@ -123,7 +123,7 @@ def main():
     #cmdLineParser.add_option("-c", action="store_true", dest="use_cache", default = False, help = "use the cache")
     #cmdLineParser.add_option("-f", action="store", type="string", dest="file", default="", help="the input file")
     cmdLineParser.add_argument("-p", "--port", action="store", type=int, 
-        dest="port", default = 4005, help="The TCP port to use")
+        dest="port", default = 4003, help="The TCP port to use")
     args = cmdLineParser.parse_args()
     print("Using args", args)
 
@@ -135,13 +135,13 @@ def main():
     logging.getLogger().setLevel(logging.ERROR)
 
     #enable logging when member vars are assigned
-    import utils 
-    from order import Order
+    from ibapi import utils
+    from ibapi.order import Order
     Order.__setattr__ = utils.setattr_log
-    from contract import Contract,DeltaNeutralContract
+    from ibapi.contract import Contract,DeltaNeutralContract
     Contract.__setattr__ = utils.setattr_log
     DeltaNeutralContract.__setattr__ = utils.setattr_log
-    from tag_value import TagValue
+    from ibapi.tag_value import TagValue
     TagValue.__setattr__ = utils.setattr_log
     TimeCondition.__setattr__ = utils.setattr_log 
     ExecutionCondition.__setattr__ = utils.setattr_log  

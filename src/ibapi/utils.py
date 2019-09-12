@@ -36,7 +36,7 @@ class LogFunction(object):
 
     def __call__(self, fn):
         def newFn(origSelf, *args, **kwargs):
-            if logger.getLogger().isEnabledFor(self.logLevel):
+            if logger.isEnabledFor(self.logLevel):
                 argNames = [argName for argName in inspect.getfullargspec(fn)[0] if argName != 'self']
                 logger.log(self.logLevel,
                     "{} {} {} kw:{}".format(self.text, fn.__name__,
@@ -109,9 +109,9 @@ def ExerciseStaticMethods(klass):
             print()
 
 def floatToStr(val):
-    return str(val) if val != UNSET_DOUBLE else "";
+    return str(val) if val != UNSET_DOUBLE else ""
 
 def longToStr(val):
-    return str(val) if val != UNSET_LONG else "";
+    return str(val) if val != UNSET_LONG else ""
 
 
