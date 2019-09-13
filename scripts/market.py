@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class TestApp(LightIBrokerClient):
 
     def __init__(self):
-        LightIBrokerClient.__init__(self, self)
+        LightIBrokerClient.__init__(self)
 
     def logAnswer(self, fnName, fnParams):
         if logger.isEnabledFor(logging.INFO):
