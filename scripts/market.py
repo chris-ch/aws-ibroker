@@ -5,13 +5,15 @@ from ibapi.ticktype import TickType
 
 import logging
 
+from scripts.lightclient import LightIBrokerClient
+
 logger = logging.getLogger(__name__)
 
 
-class TestApp(EClient):
+class TestApp(LightIBrokerClient):
 
     def __init__(self):
-        EClient.__init__(self, self)
+        LightIBrokerClient.__init__(self, self)
 
     def logAnswer(self, fnName, fnParams):
         if logger.isEnabledFor(logging.INFO):
@@ -71,6 +73,7 @@ class TestApp(EClient):
 
 
 def main():
+    # TODO: REST requests to EClient
     app = TestApp()
     app.connect('127.0.0.1', 4003, 0)
     contract = Contract()
@@ -85,4 +88,5 @@ def main():
 
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(name)s:%(levelname)s:%(message)s')
     main()

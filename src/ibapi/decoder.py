@@ -1263,6 +1263,7 @@ class Decoder(object):
             logger.debug("no fields")
             return
 
+        logger.info('received fields: {}'.format(repr(fields)))
         sMsgId = fields[0]
         nMsgId = int(sMsgId)
 
@@ -1276,8 +1277,10 @@ class Decoder(object):
             if handleInfo.wrapperMeth is not None:
                 logger.debug("In interpret(), handleInfo: %s", handleInfo)
                 self.interpretWithSignature(fields, handleInfo)
+
             elif handleInfo.processMeth is not None:
                 handleInfo.processMeth(self, iter(fields))
+
         except BadMessage:
                 theBadMsg = ",".join(fields)
                 self.wrapper.error(NO_VALID_ID, BAD_MESSAGE.code(),
