@@ -5,8 +5,10 @@ Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is su
 from enum import Enum
 from threading import Thread
 
-from scripts.lightconnection import LightConnection, make_field, make_field_handle_empty
-from scripts.refibroker import Incoming, Outgoing
+from iblight import lightcomm
+from iblight.lightconnection import LightConnection
+from iblight.lightcomm import make_field, make_field_handle_empty
+from iblight.refibroker import Incoming, Outgoing
 
 """
 The main class to use from API user's point of view.
@@ -21,7 +23,6 @@ import logging
 import queue
 import socket
 
-from ibapi import comm
 from ibapi.connection import NO_VALID_ID, NOT_CONNECTED, CONNECT_FAIL, MAX_MSG_LEN, BAD_LENGTH, TickerId, \
     TagValueList, UPDATE_TWS, OrderId, UNSET_INTEGER, UNSET_DOUBLE, FaDataType, BAD_MESSAGE
 from ibapi.contract import Contract
@@ -75,7 +76,7 @@ class LightReader(Thread):
                 buf += data
 
                 while len(buf) > 0:
-                    (size, msg, buf) = comm.read_msg(buf)
+                    (size, msg, buf) = lightcomm.read_msg(buf)
                     logger.info("size:%d msg.size:%d msg:|%s| buf:%s|", size, len(msg), buf, "|")
 
                     if msg:
@@ -152,7 +153,7 @@ class LightIBrokerClient(object):
         logger.debug("%s conn_state: %s -> %s" % (id(self), _conn_state, self.conn_state))
 
     def send_msg(self, msg):
-        full_msg = comm.make_msg(msg)
+        full_msg = lightcomm.make_msg(msg)
         logger.info("sending %s %s", current_fn_name(1), full_msg)
         self.conn.send_msg(full_msg)
 
@@ -212,7 +213,7 @@ class LightIBrokerClient(object):
             v100prefix = "API\0"
             v100version = "v%d..%d" % (MIN_CLIENT_VER, MAX_CLIENT_VER)
             #v100version = "v%d..%d" % (MIN_CLIENT_VER, 101)
-            msg = comm.make_msg(v100version)
+            msg = lightcomm.make_msg(v100version)
             logger.info("msg %s", msg)
             msg2 = str.encode(v100prefix, 'ascii') + msg
             logger.info("sending %s", msg2)
@@ -227,9 +228,9 @@ class LightIBrokerClient(object):
                 buf = self.conn.recv_msg()
                 logger.debug("ANSWER %s", buf)
                 if len(buf) > 0:
-                    (size, msg, rest) = comm.read_msg(buf)
+                    (size, msg, rest) = lightcomm.read_msg(buf)
                     logger.debug("size:%d msg:%s rest:%s|", size, msg, rest)
-                    fields = comm.read_fields(msg)
+                    fields = lightcomm.read_fields(msg)
                     logger.debug("fields %s", fields)
                 else:
                     fields = []
@@ -303,7 +304,7 @@ class LightIBrokerClient(object):
                     except queue.Empty:
                         logger.debug("queue.get: empty")
                     else:
-                        fields = comm.read_fields(text)
+                        fields = lightcomm.read_fields(text)
                         logger.debug("fields %s", fields)
                         self.decoder.interpret(fields)
                 except (KeyboardInterrupt, SystemExit):
@@ -320,30 +321,17 @@ class LightIBrokerClient(object):
         finally:
             self.disconnect()
 
-
-    def reqCurrentTime(self):
-        """Asks the current system time on the server side."""
-
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(),
-                               NOT_CONNECTED.msg())
-            return
-
-        VERSION = 1
-
-        msg = make_field(Outgoing.REQ_CURRENT_TIME) + make_field(VERSION)
-
-        self.send_msg(msg)
-
-
     def server_version(self):
         """Returns the version of the TWS instance to which the API
         application is connected."""
-
         return self.serverVersion_
 
+    def twsConnectionTime(self):
+        """Returns the time the API application made a connection to TWS."""
+
+        return self.connTime
+
+    ##########################################################################
 
     def setServerLogLevel(self, logLevel:int):
         """The default detail level is ERROR. For more details, see API
@@ -362,20 +350,26 @@ class LightIBrokerClient(object):
 
         self.send_msg(msg)
 
+    def reqCurrentTime(self):
+        """Asks the current system time on the server side."""
 
-    def twsConnectionTime(self):
-        """Returns the time the API application made a connection to TWS."""
+        self.handle_request(current_fn_name(), vars())
 
-        return self.connTime
+        if not self.is_connected():
+            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(),
+                               NOT_CONNECTED.msg())
+            return
 
+        VERSION = 1
 
+        msg = make_field(Outgoing.REQ_CURRENT_TIME) + make_field(VERSION)
 
+        self.send_msg(msg)
 
 
     ##########################################################################
     ################## Market Data
     ##########################################################################
-
 
     def reqMktData(self, reqId:TickerId, contract:Contract,
                     genericTickList:str, snapshot:bool, regulatorySnapshot: bool,
@@ -525,7 +519,6 @@ class LightIBrokerClient(object):
         if not self.is_connected():
             self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
-
 
         msg = make_field(Outgoing.REQ_SMART_COMPONENTS) \
             + make_field(reqId) \
@@ -680,7 +673,6 @@ class LightIBrokerClient(object):
         if not self.is_connected():
             self.wrapper.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
-
 
         VERSION = 3
 
