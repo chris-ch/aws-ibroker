@@ -8,16 +8,15 @@ from threading import Thread
 from typing import Tuple
 
 from iblight import lightcomm
-from iblight.lightconnection import LightConnection
-from iblight.lightcomm import make_field, make_field_handle_empty
+from iblight.lightconnection import LightConnection, NO_VALID_ID, NOT_CONNECTED, CONNECT_FAIL
+from iblight.lightcomm import make_field, make_field_handle_empty, UNSET_DOUBLE, UNSET_INTEGER
 from iblight.refibroker import Incoming, Outgoing
 
 import logging
 import queue
 import socket
 
-from ibapi.connection import NO_VALID_ID, NOT_CONNECTED, CONNECT_FAIL, MAX_MSG_LEN, BAD_LENGTH, TickerId, \
-    TagValueList, UPDATE_TWS, OrderId, UNSET_INTEGER, UNSET_DOUBLE, FaDataType, BAD_MESSAGE
+from ibapi.connection import MAX_MSG_LEN, BAD_LENGTH, UPDATE_TWS, BAD_MESSAGE
 from ibapi.contract import Contract
 from ibapi.order import Order
 from ibapi.execution import ExecutionFilter
@@ -32,9 +31,12 @@ It takes care of almost everything:
 The user just needs to override EWrapper methods to receive the answers.
 """
 
-#TODO: use pylint
-
 logger = logging.getLogger(__name__)
+
+TickerId = int
+OrderId  = int
+TagValueList = list
+FaDataType = int
 
 MIN_SERVER_VER_AUTO_PRICE_FOR_HEDGE     = 141
 MIN_SERVER_VER_WHAT_IF_EXT_FIELDS       = 142
@@ -150,10 +152,10 @@ class LightIBrokerClient(object):
         self.conn_state = conn_state
         logger.debug("%s conn_state: %s -> %s" % (id(self), _conn_state, self.conn_state))
 
-    def send_msg(self, msg):
-        full_msg = lightcomm.make_msg(msg)
+    def send_msg(self, text: str) -> int:
+        full_msg = lightcomm.make_msg(text)
         logger.debug("sending %s %s", current_fn_name(1), full_msg)
-        self._socket.send_msg(full_msg)
+        return self._socket.send_msg(full_msg)
 
     @staticmethod
     def handle_request(func_name, func_params):
@@ -308,15 +310,17 @@ class LightIBrokerClient(object):
         """Returns the time the API application made a connection to TWS."""
         return self.conn_time
 
-    def request_ibroker(self, command: Outgoing, args: OrderedDict):
+    def request_ibroker(self, command: Outgoing, args: OrderedDict) -> int:
         if not self.is_connected():
             self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
+            return -1
 
         logger.info("REQUEST {} {}".format(command.name, args))
 
         msg = ''.join([make_field(field) for field in [command] + list(args.values())])
-        self.send_msg(msg)
+        sent_bytes = self.send_msg(msg)
+        if sent_bytes <= 0:
+            logger.error('server error: failed to connect')
 
     ##########################################################################
 
@@ -410,34 +414,172 @@ class LightIBrokerClient(object):
         """Asks the current system time on the server side."""
         self.request_ibroker(Outgoing.REQ_CURRENT_TIME, OrderedDict(version=1))
 
-
-    ##########################################################################
-    ################## Market Data
-    ##########################################################################
-
-    def cancelMktData(self, reqId:TickerId):
+    def cancel_market_data(self, req_id: TickerId):
         """After calling this function, market data for the specified id
         will stop flowing.
 
         reqId: TickerId - The ID that was specified in the call to
             reqMktData(). """
+        self.request_ibroker(Outgoing.CANCEL_MKT_DATA, OrderedDict(version=2, req_id=req_id))
 
-        self.handle_request(current_fn_name(), vars())
+    def req_market_rule(self, market_rule_id: int):
+        self.request_ibroker(Outgoing.REQ_MARKET_RULE, OrderedDict(market_rule_id=market_rule_id))
 
-        if not self.is_connected():
-            self.event_handler.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
+    def req_tick_by_tick_data(self, req_id: int, contract: Contract, tick_type: str, ticks_count: int, ignore_size: bool):
+        self.request_ibroker(Outgoing.REQ_TICK_BY_TICK_DATA,
+                             OrderedDict(req_id=req_id,
+                                         con_id=contract.conId,
+                                         symbol=contract.symbol,
+                                         sec_type=contract.secType,
+                                         last_trade_date_or_contract_month=contract.lastTradeDateOrContractMonth,
+                                         strike=contract.strike,
+                                         right=contract.right,
+                                         multiplier=contract.multiplier,
+                                         exchange=contract.exchange,
+                                         primary_exchange=contract.primaryExchange,
+                                         currency=contract.currency,
+                                         local_symbol=contract.localSymbol,
+                                         trading_class=contract.tradingClass,
+                                         tick_type=tick_type,
+                                         ticks_count=ticks_count,
+                                         ignore_size=ignore_size
+                                         )
+                             )
 
-        VERSION = 2
+    def cancel_tick_by_tick_data(self, req_id: int):
+        self.request_ibroker(Outgoing.CANCEL_TICK_BY_TICK_DATA, OrderedDict(req_id=req_id))
 
-        # send req mkt data msg
-        flds = []
-        flds += [make_field(Outgoing.CANCEL_MKT_DATA),
-            make_field(VERSION),
-            make_field(reqId)]
+    def req_contract_details(self, req_id: int, contract: Contract):
+        """Call this function to download all details for a particular
+        underlying. The contract details will be received via the contractDetails()
+        function on the EWrapper.
 
-        msg = "".join(flds)
-        self.send_msg(msg)
+        reqId:int - The ID of the data request. Ensures that responses are
+            make_fieldatched to requests if several requests are in process.
+        contract:Contract - The summary description of the contract being looked
+            up."""
+
+        self.request_ibroker(Outgoing.REQ_CONTRACT_DATA,
+                             OrderedDict(version=8,
+                                         req_id=req_id,
+                                         con_id=contract.conId,
+                                         symbol=contract.symbol,
+                                         sec_type=contract.secType,
+                                         last_trade_date_or_contract_month=contract.lastTradeDateOrContractMonth,
+                                         strike=contract.strike,
+                                         right=contract.right,
+                                         multiplier=contract.multiplier,
+                                         exchange=contract.exchange,
+                                         primary_exchange=contract.primaryExchange,
+                                         currency=contract.currency,
+                                         local_symbol=contract.localSymbol,
+                                         trading_class=contract.tradingClass,
+                                         include_expired=contract.includeExpired,
+                                         sec_id_type=contract.secIdType,
+                                         sec_id=contract.secId
+                                         )
+                             )
+
+    def req_account_updates(self, subscribe: bool, account_code: str):
+        """Call this function to start getting account values, portfolio,
+        and last update time information via EWrapper.updateAccountValue(),
+        EWrapperi.updatePortfolio() and Wrapper.updateAccountTime().
+
+        subscribe:bool - If set to TRUE, the client will start receiving account
+            and Portfoliolio updates. If set to FALSE, the client will stop
+            receiving this information.
+        acctCode:str -The account code for which to receive account and
+            portfolio updates."""
+        self.request_ibroker(Outgoing.REQ_ACCT_DATA, OrderedDict(version=2, subscribe=subscribe, account_code=account_code))
+
+    def req_account_summary(self, req_id: int, group_name: str, tags: str):
+        """Call this method to request and keep up to date the data that appears
+        on the TWS Account Window Summary tab. The data is returned by
+        accountSummary().
+
+        Note:   This request is designed for an FA managed account but can be
+        used for any multi-account structure.
+
+        reqId:int - The ID of the data request. Ensures that responses are matched
+            to requests If several requests are in process.
+        groupName:str - Set to All to returnrn account summary data for all
+            accounts, or set to a specific Advisor Account Group name that has
+            already been created in TWS Global Configuration.
+        tags:str - A comma-separated list of account tags.  Available tags are:
+            accountountType
+            NetLiquidation,
+            TotalCashValue - Total cash including futures pnl
+            SettledCash - For cash accounts, this is the same as
+            TotalCashValue
+            AccruedCash - Net accrued interest
+            BuyingPower - The maximum amount of marginable US stocks the
+                account can buy
+            EquityWithLoanValue - Cash + stocks + bonds + mutual funds
+            PreviousDayEquityWithLoanValue,
+            GrossPositionValue - The sum of the absolute value of all stock
+                and equity option positions
+            RegTEquity,
+            RegTMargin,
+            SMA - Special Memorandum Account
+            InitMarginReq,
+            MaintMarginReq,
+            AvailableFunds,
+            ExcessLiquidity,
+            Cushion - Excess liquidity as a percentage of net liquidation value
+            FullInitMarginReq,
+            FullMaintMarginReq,
+            FullAvailableFunds,
+            FullExcessLiquidity,
+            LookAheadNextChange - Time when look-ahead values take effect
+            LookAheadInitMarginReq,
+            LookAheadMaintMarginReq,
+            LookAheadAvailableFunds,
+            LookAheadExcessLiquidity,
+            HighestSeverity - A measure of how close the account is to liquidation
+            DayTradesRemaining - The Number of Open/Close trades a user
+                could put on before Pattern Day Trading is detected. A value of "-1"
+                means that the user can put on unlimited day trades.
+            Leverage - GrossPositionValue / NetLiquidation
+            $LEDGER - Single flag to relay all cash balance tags*, only in base
+                currency.
+            $LEDGER:CURRENCY - Single flag to relay all cash balance tags*, only in
+                the specified currency.
+            $LEDGER:ALL - Single flag to relay all cash balance tags* in all
+            currencies."""
+        self.request_ibroker(Outgoing.REQ_ACCOUNT_SUMMARY, OrderedDict(version=1, req_id=req_id, group_name=group_name, tags=tags))
+
+    def cancel_account_summary(self, req_id: int):
+        """Cancels the request for Account Window Summary tab data.
+
+        reqId:int - The ID of the data request being canceled."""
+        self.request_ibroker(Outgoing.CANCEL_ACCOUNT_SUMMARY, OrderedDict(version=1, req_id=req_id))
+
+    def req_positions(self):
+        """Requests real-time position data for all accounts."""
+        self.request_ibroker(Outgoing.REQ_POSITIONS, OrderedDict(version=1))
+
+    def cancel_positions(self):
+        """Cancels real-time position updates."""
+        self.request_ibroker(Outgoing.CANCEL_POSITIONS, OrderedDict(version=1))
+
+    def req_positions_multi(self, req_id: int, account: str, model_code: str):
+        """Requests positions for account and/or model.
+        Results are delivered via EWrapper.positionMulti() and
+        EWrapper.positionMultiEnd() """
+        self.request_ibroker(Outgoing.REQ_POSITIONS_MULTI, OrderedDict(version=1, req_id=req_id, account=account, model_code=model_code))
+
+    def cancel_positions_multi(self, req_id: int):
+        self.request_ibroker(Outgoing.CANCEL_POSITIONS_MULTI, OrderedDict(version=1, req_id=req_id))
+
+    def req_account_updates_multi(self, req_id: int, account: str, model_code: str, ledger_and_NLV: bool):
+        """Requests account updates for account and/or model."""
+        self.request_ibroker(Outgoing.REQ_ACCOUNT_UPDATES_MULTI, OrderedDict(version=1, req_id=req_id, account=account, model_code=model_code, ledger_and_NLV=ledger_and_NLV))
+
+    def cancel_account_updates_multi(self, req_id: int):
+        self.request_ibroker(Outgoing.CANCEL_ACCOUNT_UPDATES_MULTI, OrderedDict(version=1, req_id=req_id))
+
+    ##########################################################################
+    ##########################################################################
 
     def reqSmartComponents(self, reqId: int, bboExchange: str):
         self.handle_request(current_fn_name(), vars())
@@ -452,57 +594,6 @@ class LightIBrokerClient(object):
 
         self.send_msg(msg)
 
-    def reqMarketRule(self, marketRuleId: int):
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        msg = make_field(Outgoing.REQ_MARKET_RULE) \
-            + make_field(marketRuleId)
-
-        self.send_msg(msg)
-
-    def reqTickByTickData(self, reqId: int, contract: Contract, tickType: str,
-                          numberOfTicks: int, ignoreSize: bool):
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        msg = make_field(Outgoing.REQ_TICK_BY_TICK_DATA)\
-            + make_field(reqId) \
-            + make_field(contract.conId) \
-            + make_field(contract.symbol) \
-            + make_field(contract.secType) \
-            + make_field(contract.lastTradeDateOrContractMonth) \
-            + make_field(contract.strike) \
-            + make_field(contract.right) \
-            + make_field(contract.multiplier) \
-            + make_field(contract.exchange) \
-            + make_field(contract.primaryExchange) \
-            + make_field(contract.currency) \
-            + make_field(contract.localSymbol) \
-            + make_field(contract.tradingClass) \
-            + make_field(tickType)
-
-        msg += make_field(numberOfTicks) + make_field(ignoreSize)
-
-        self.send_msg(msg)
-
-    def cancelTickByTickData(self, reqId: int):
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        msg = make_field(Outgoing.CANCEL_TICK_BY_TICK_DATA) \
-            + make_field(reqId)
-
-        self.send_msg(msg)
 
     ##########################################################################
     ################## Options
@@ -560,8 +651,6 @@ class LightIBrokerClient(object):
         msg = "".join(flds)
         self.send_msg(msg)
 
-
-
     def cancelCalculateImpliedVolatility(self, reqId:TickerId):
         """Call this function to cancel a request to calculate
         volatility for a supplied option price and underlying price.
@@ -581,7 +670,6 @@ class LightIBrokerClient(object):
             + make_field(reqId)
 
         self.send_msg(msg)
-
 
     def calculateOptionPrice(self, reqId:TickerId, contract:Contract,
                              volatility:float, underPrice:float,
@@ -634,8 +722,6 @@ class LightIBrokerClient(object):
 
         msg = "".join(flds)
         self.send_msg(msg)
-
-
 
     def cancelCalculateOptionPrice(self, reqId:TickerId):
         """Call this function to cancel a request to calculate the option
@@ -906,8 +992,7 @@ class LightIBrokerClient(object):
 
         flds.append(make_field_handle_empty( order.scalePriceIncrement))
 
-        if order.scalePriceIncrement != UNSET_DOUBLE \
-            and order.scalePriceIncrement > 0.0:
+        if order.scalePriceIncrement != UNSET_DOUBLE and order.scalePriceIncrement > 0.0:
 
             flds += [make_field_handle_empty( order.scalePriceAdjustValue),
                 make_field_handle_empty( order.scalePriceAdjustInterval),
@@ -1063,7 +1148,6 @@ class LightIBrokerClient(object):
 
         self.send_msg(msg)
 
-
     def reqAutoOpenOrders(self, bAutoBind:bool):
         """Call this function to request that newly created TWS orders
         be implicitly associated with the client. When a new TWS order is
@@ -1154,244 +1238,6 @@ class LightIBrokerClient(object):
         msg = make_field(Outgoing.REQ_IDS) \
            + make_field(VERSION)   \
            + make_field(numIds)
-
-        self.send_msg(msg)
-
-
-
-    #########################################################################
-    ################## Account and Portfolio
-    ########################################################################
-
-    def reqAccountUpdates(self, subscribe:bool, acctCode:str):
-        """Call this function to start getting account values, portfolio,
-        and last update time information via EWrapper.updateAccountValue(),
-        EWrapperi.updatePortfolio() and Wrapper.updateAccountTime().
-
-        subscribe:bool - If set to TRUE, the client will start receiving account
-            and Portfoliolio updates. If set to FALSE, the client will stop
-            receiving this information.
-        acctCode:str -The account code for which to receive account and
-            portfolio updates."""
-
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        VERSION = 2
-
-        flds = []
-        flds += [make_field(Outgoing.REQ_ACCT_DATA),
-           make_field(VERSION),
-           make_field(subscribe),  # TRUE = subscribe, FALSE = unsubscribe.
-           make_field(acctCode)]   # srv v9 and above, the account code. This will only be used for FA clients
-
-        msg = "".join(flds)
-        self.send_msg(msg)
-
-
-    def reqAccountSummary(self, reqId:int, groupName:str, tags:str):
-        """Call this method to request and keep up to date the data that appears
-        on the TWS Account Window Summary tab. The data is returned by
-        accountSummary().
-
-        Note:   This request is designed for an FA managed account but can be
-        used for any multi-account structure.
-
-        reqId:int - The ID of the data request. Ensures that responses are matched
-            to requests If several requests are in process.
-        groupName:str - Set to All to returnrn account summary data for all
-            accounts, or set to a specific Advisor Account Group name that has
-            already been created in TWS Global Configuration.
-        tags:str - A comma-separated list of account tags.  Available tags are:
-            accountountType
-            NetLiquidation,
-            TotalCashValue - Total cash including futures pnl
-            SettledCash - For cash accounts, this is the same as
-            TotalCashValue
-            AccruedCash - Net accrued interest
-            BuyingPower - The maximum amount of marginable US stocks the
-                account can buy
-            EquityWithLoanValue - Cash + stocks + bonds + mutual funds
-            PreviousDayEquityWithLoanValue,
-            GrossPositionValue - The sum of the absolute value of all stock
-                and equity option positions
-            RegTEquity,
-            RegTMargin,
-            SMA - Special Memorandum Account
-            InitMarginReq,
-            MaintMarginReq,
-            AvailableFunds,
-            ExcessLiquidity,
-            Cushion - Excess liquidity as a percentage of net liquidation value
-            FullInitMarginReq,
-            FullMaintMarginReq,
-            FullAvailableFunds,
-            FullExcessLiquidity,
-            LookAheadNextChange - Time when look-ahead values take effect
-            LookAheadInitMarginReq,
-            LookAheadMaintMarginReq,
-            LookAheadAvailableFunds,
-            LookAheadExcessLiquidity,
-            HighestSeverity - A measure of how close the account is to liquidation
-            DayTradesRemaining - The Number of Open/Close trades a user
-                could put on before Pattern Day Trading is detected. A value of "-1"
-                means that the user can put on unlimited day trades.
-            Leverage - GrossPositionValue / NetLiquidation
-            $LEDGER - Single flag to relay all cash balance tags*, only in base
-                currency.
-            $LEDGER:CURRENCY - Single flag to relay all cash balance tags*, only in
-                the specified currency.
-            $LEDGER:ALL - Single flag to relay all cash balance tags* in all
-            currencies."""
-
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        VERSION = 1
-
-        msg = make_field(Outgoing.REQ_ACCOUNT_SUMMARY) \
-           + make_field(VERSION)   \
-           + make_field(reqId)     \
-           + make_field(groupName) \
-           + make_field(tags)
-
-        self.send_msg(msg)
-
-
-    def cancelAccountSummary(self, reqId:int):
-        """Cancels the request for Account Window Summary tab data.
-
-        reqId:int - The ID of the data request being canceled."""
-
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        VERSION = 1
-
-        msg = make_field(Outgoing.CANCEL_ACCOUNT_SUMMARY) \
-           + make_field(VERSION)   \
-           + make_field(reqId)
-
-        self.send_msg(msg)
-
-
-    def reqPositions(self):
-        """Requests real-time position data for all accounts."""
-
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        VERSION = 1
-
-        msg = make_field(Outgoing.REQ_POSITIONS) \
-           + make_field(VERSION)
-
-        self.send_msg(msg)
-
-
-    def cancelPositions(self):
-        """Cancels real-time position updates."""
-
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        VERSION = 1
-
-        msg = make_field(Outgoing.CANCEL_POSITIONS) \
-           + make_field(VERSION)
-
-        self.send_msg(msg)
-
-
-    def reqPositionsMulti(self, reqId:int, account:str, modelCode:str):
-        """Requests positions for account and/or model.
-        Results are delivered via EWrapper.positionMulti() and
-        EWrapper.positionMultiEnd() """
-
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        VERSION = 1
-
-        msg = make_field(Outgoing.REQ_POSITIONS_MULTI) \
-           + make_field(VERSION)   \
-           + make_field(reqId)     \
-           + make_field(account) \
-           + make_field(modelCode)
-
-        self.send_msg(msg)
-
-
-    def cancelPositionsMulti(self, reqId:int):
-
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        VERSION = 1
-
-        msg = make_field(Outgoing.CANCEL_POSITIONS_MULTI) \
-           + make_field(VERSION)   \
-           + make_field(reqId)     \
-
-        self.send_msg(msg)
-
-
-    def reqAccountUpdatesMulti(self, reqId: int, account:str, modelCode:str,
-                                ledgerAndNLV:bool):
-        """Requests account updates for account and/or model."""
-
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        VERSION = 1
-
-        msg = make_field(Outgoing.REQ_ACCOUNT_UPDATES_MULTI) \
-           + make_field(VERSION)   \
-           + make_field(reqId)     \
-           + make_field(account) \
-           + make_field(modelCode) \
-           + make_field(ledgerAndNLV)
-
-        self.send_msg(msg)
-
-
-    def cancelAccountUpdatesMulti(self, reqId:int):
-
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        VERSION = 1
-
-        msg = make_field(Outgoing.CANCEL_ACCOUNT_UPDATES_MULTI) \
-           + make_field(VERSION)   \
-           + make_field(reqId)     \
 
         self.send_msg(msg)
 
@@ -1504,60 +1350,6 @@ class LightIBrokerClient(object):
 
         msg = "".join(flds)
         self.send_msg(msg)
-
-
-    #########################################################################
-    ################## Contract Details
-    #########################################################################
-
-
-    def reqContractDetails(self, reqId:int , contract:Contract):
-        """Call this function to download all details for a particular
-        underlying. The contract details will be received via the contractDetails()
-        function on the EWrapper.
-
-        reqId:int - The ID of the data request. Ensures that responses are
-            make_fieldatched to requests if several requests are in process.
-        contract:Contract - The summary description of the contract being looked
-            up."""
-
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        VERSION = 8
-
-        # send req mkt data msg
-        flds = []
-        flds += [make_field(Outgoing.REQ_CONTRACT_DATA),
-            make_field( VERSION)]
-
-        flds += [make_field( reqId),]
-
-        # send contract fields
-        flds += [make_field(contract.conId), # srv v37 and above
-            make_field(contract.symbol),
-            make_field(contract.secType),
-            make_field(contract.lastTradeDateOrContractMonth),
-            make_field(contract.strike),
-            make_field(contract.right),
-            make_field(contract.multiplier)] # srv v15 and above
-
-        flds += [make_field(contract.exchange),
-            make_field(contract.primaryExchange)]
-
-        flds += [make_field( contract.currency),
-            make_field( contract.localSymbol)]
-        flds += [make_field(contract.tradingClass), ]
-        flds += [make_field(contract.includeExpired),] # srv v31 and above
-
-        flds += [make_field( contract.secIdType), make_field( contract.secId)]
-
-        msg = "".join(flds)
-        self.send_msg(msg)
-
 
     #########################################################################
     ################## Market Depth

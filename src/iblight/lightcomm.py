@@ -55,7 +55,7 @@ def read_msg(buf: bytes) -> Tuple[int, str, bytes]:
         return size, "", buf
 
 
-def read_fields(buf: bytes) -> Tuple[bytes]:
+def read_fields(buf: str) -> Tuple[bytes]:
     if isinstance(buf, str):
         buf = buf.encode()
 

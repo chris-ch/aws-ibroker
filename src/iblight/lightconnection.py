@@ -23,6 +23,7 @@ class CodeMsgPair:
         return self.errorMsg
 
 
+NOT_CONNECTED = CodeMsgPair(504, "Not connected")
 NO_VALID_ID = -1
 FAIL_CREATE_SOCK = CodeMsgPair(520, "Failed to create socket")
 CONNECT_FAIL = CodeMsgPair(502,
