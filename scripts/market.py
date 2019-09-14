@@ -49,6 +49,20 @@ class IBrokerMarketData(Resource):
         return {'status-code': 'OK'}
 
 
+class IBrokerPortfolioPositions(Resource):
+
+    def get(self):
+        get_ibroker_client().req_positions()
+        return {'status-code': 'OK'}
+
+
+class IBrokerAccountSummary(Resource):
+
+    def get(self, req_id: int, group_name: str, tags: str):
+        get_ibroker_client().req_account_summary(req_id, group_name=group_name, tags=tags)
+        return {'status-code': 'OK'}
+
+
 def main():
     # TODO: REST requests to EClient
 
@@ -57,6 +71,8 @@ def main():
 
     api.add_resource(IBrokerMarketDataType, '/mkt-data-type/<int:data_type_id>')
     api.add_resource(IBrokerMarketData, '/mkt-data/<int:req_id>')
+    api.add_resource(IBrokerPortfolioPositions, '/positions')
+    api.add_resource(IBrokerAccountSummary, '/account-summary/<int:req_id>/<string:group_name>/<string:tags>')
 
     app.run(debug=True)
 

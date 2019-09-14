@@ -502,11 +502,11 @@ class LightIBrokerClient(object):
 
         reqId:int - The ID of the data request. Ensures that responses are matched
             to requests If several requests are in process.
-        groupName:str - Set to All to returnrn account summary data for all
+        groupName:str - Set to All to return account summary data for all
             accounts, or set to a specific Advisor Account Group name that has
             already been created in TWS Global Configuration.
         tags:str - A comma-separated list of account tags.  Available tags are:
-            accountountType
+            accountType
             NetLiquidation,
             TotalCashValue - Total cash including futures pnl
             SettledCash - For cash accounts, this is the same as
@@ -577,6 +577,196 @@ class LightIBrokerClient(object):
 
     def cancel_account_updates_multi(self, req_id: int):
         self.request_ibroker(Outgoing.CANCEL_ACCOUNT_UPDATES_MULTI, OrderedDict(version=1, req_id=req_id))
+
+    def req_historical_data(self, req_id: TickerId , contract: Contract, end_date_time: str,
+                          duration_str: str, bar_size_setting: str, what_to_show: str,
+                          use_RTH: int, format_date: int, keep_up_to_date: bool, chart_options: TagValueList):
+        """Requests contracts' historical data. When requesting historical data, a
+        finishing time and date is required along with a duration string. The
+        resulting bars will be returned in EWrapper.historicalData()
+
+        reqId:TickerId - The id of the request. Must be a unique value. When the
+            market data returns, it whatToShowill be identified by this tag. This is also
+            used when canceling the market data.
+        contract:Contract - This object contains a description of the contract for which
+            market data is being requested.
+        endDateTime:str - Defines a query end date and time at any point during the past 6 mos.
+            Valid values include any date/time within the past six months in the format:
+            yyyymmdd HH:mm:ss ttt
+
+            where "ttt" is the optional time zone.
+        durationStr:str - Set the query duration up to one week, using a time unit
+            of seconds, days or weeks. Valid values include any integer followed by a space
+            and then S (seconds), D (days) or W (week). If no unit is specified, seconds is used.
+        barSizeSetting:str - Specifies the size of the bars that will be returned (within IB/TWS listimits).
+            Valid values include:
+            1 sec
+            5 secs
+            15 secs
+            30 secs
+            1 min
+            2 mins
+            3 mins
+            5 mins
+            15 mins
+            30 mins
+            1 hour
+            1 day
+        whatToShow:str - Determines the nature of data beinging extracted. Valid values include:
+
+            TRADES
+            MIDPOINT
+            BID
+            ASK
+            BID_ASK
+            HISTORICAL_VOLATILITY
+            OPTION_IMPLIED_VOLATILITY
+        useRTH:int - Determines whether to return all data available during the requested time span,
+            or only data that falls within regular trading hours. Valid values include:
+
+            0 - all data is returned even where the market in question was outside of its
+            regular trading hours.
+            1 - only data within the regular trading hours is returned, even if the
+            requested time span falls partially or completely outside of the RTH.
+        formatDate: int - Determines the date format applied to returned bars. validd values include:
+
+            1 - dates applying to bars returned in the format: yyyymmdd{space}{space}hh:mm:dd
+            2 - dates are returned as a long integer specifying the number of seconds since
+                1/1/1970 GMT.
+        chartOptions:TagValueList - For internal use only. Use default value XYZ. """
+
+        fields = OrderedDict(req_id=req_id,
+                    con_id=contract.conId,
+                    symbol=contract.symbol,
+                    sec_type=contract.secType,
+                    last_trade_date_or_contract_month=contract.lastTradeDateOrContractMonth,
+                    strike=contract.strike,
+                    right=contract.right,
+                    multiplier=contract.multiplier,
+                    exchange=contract.exchange,
+                    primary_exchange=contract.primaryExchange,
+                    currency=contract.currency,
+                    local_symbol=contract.localSymbol,
+                    trading_class=contract.tradingClass,
+                    include_expired=contract.includeExpired,
+                    end_date_time=end_date_time,
+                    bar_size_setting=bar_size_setting,
+                    duration_str=duration_str,
+                    use_RTH=use_RTH,
+                    what_to_show=what_to_show,
+                    format_date=format_date
+                    )
+        # Send combo legs for BAG requests
+        if contract.secType == "BAG":
+            fields['combo_legs'] = len(contract.comboLegs)
+            for comboLeg in contract.comboLegs:
+                fields['combo_leg_con_id'] = comboLeg.conId
+                fields['combo_leg_ratio'] = comboLeg.ratio
+                fields['combo_leg_action'] = comboLeg.action
+                fields['combo_leg_exchange'] = comboLeg.exchange
+
+        fields['keep_up_to_date'] = keep_up_to_date
+
+        # send chartOptions parameter
+        chart_options_str = ""
+        if chart_options:
+            for tagValue in chart_options:
+                chart_options_str += str(tagValue)
+
+        fields['chart_options'] = chart_options_str
+        self.request_ibroker(Outgoing.REQ_HISTORICAL_DATA, fields)
+
+    def cancel_historical_data(self, req_id: TickerId):
+        """Used if an internet disconnect has occurred or the results of a query
+        are otherwise delayed and the application is no longer interested in receiving
+        the data.
+
+        reqId:TickerId - The ticker ID. Must be a unique value."""
+        self.request_ibroker(Outgoing.CANCEL_HISTORICAL_DATA, OrderedDict(version=1, req_id=req_id))
+
+    # Note that formatData parameter affects intraday bars only
+    # 1-day bars always return with date in YYYYMMDD format
+    def req_head_timestamp(self, req_id: TickerId, contract: Contract, what_to_show: str, use_RTH: int, format_date: int):
+        fields = OrderedDict(req_id=req_id,
+                    con_id=contract.conId,
+                    symbol=contract.symbol,
+                    sec_type=contract.secType,
+                    last_trade_date_or_contract_month=contract.lastTradeDateOrContractMonth,
+                    strike=contract.strike,
+                    right=contract.right,
+                    multiplier=contract.multiplier,
+                    exchange=contract.exchange,
+                    primary_exchange=contract.primaryExchange,
+                    currency=contract.currency,
+                    local_symbol=contract.localSymbol,
+                    trading_class=contract.tradingClass,
+                    include_expired=contract.includeExpired,
+                    use_RTH=use_RTH,
+                    what_to_show=what_to_show,
+                    format_date=format_date
+                    )
+        self.request_ibroker(Outgoing.REQ_HEAD_TIMESTAMP, fields)
+
+    def cancel_head_timestamp(self, req_id: TickerId):
+        self.request_ibroker(Outgoing.CANCEL_HEAD_TIMESTAMP, OrderedDict(req_id=req_id))
+
+    def req_histogram_data(self, ticker_id: int, contract: Contract, use_RTH: bool, time_period: str):
+        self.request_ibroker(Outgoing.REQ_HISTOGRAM_DATA,
+                             OrderedDict(ticker_id=ticker_id,
+                                            con_id=contract.conId,
+                                            symbol=contract.symbol,
+                                            sec_type=contract.secType,
+                                            last_trade_date_or_contract_month=contract.lastTradeDateOrContractMonth,
+                                            strike=contract.strike,
+                                            right=contract.right,
+                                            multiplier=contract.multiplier,
+                                            exchange=contract.exchange,
+                                            primary_exchange=contract.primaryExchange,
+                                            currency=contract.currency,
+                                            local_symbol=contract.localSymbol,
+                                            trading_class=contract.tradingClass,
+                                            include_expired=contract.includeExpired,
+                                            use_RTH=use_RTH,
+                                         time_period=time_period,
+                                         )
+                             )
+
+    def cancelHistogramData(self, ticker_id: int):
+        self.request_ibroker(Outgoing.CANCEL_HISTOGRAM_DATA, OrderedDict(ticker_id=ticker_id))
+
+    def req_historical_ticks(self, req_id: int, contract: Contract, start_date_time: str,
+                           end_date_time: str, number_of_ticks: int, what_to_show: str, use_RTH: int,
+                           ignore_size: bool, misc_options: TagValueList):
+
+        fields = OrderedDict(req_id=req_id,
+                            con_id=contract.conId,
+                            symbol=contract.symbol,
+                            sec_type=contract.secType,
+                            last_trade_date_or_contract_month=contract.lastTradeDateOrContractMonth,
+                            strike=contract.strike,
+                            right=contract.right,
+                            multiplier=contract.multiplier,
+                            exchange=contract.exchange,
+                            primary_exchange=contract.primaryExchange,
+                            currency=contract.currency,
+                            local_symbol=contract.localSymbol,
+                            trading_class=contract.tradingClass,
+                            include_expired=contract.includeExpired,
+                             start_date_time=start_date_time,
+                             end_date_time=end_date_time,
+                             number_of_ticks=number_of_ticks,
+                             what_to_show=what_to_show,
+                             use_RTH=use_RTH,
+                             ignore_size=ignore_size
+                         )
+
+        misc_options_string = ""
+        if misc_options:
+            for tagValue in misc_options:
+                misc_options_string += str(tagValue)
+
+        fields['misc_options'] = misc_options_string
+        self.request_ibroker(Outgoing.REQ_HISTORICAL_TICKS, fields)
 
     ##########################################################################
     ##########################################################################
@@ -1581,283 +1771,6 @@ class LightIBrokerClient(object):
            + make_field(cxml) \
 
         return self.send_msg(msg)
-
-
-    #########################################################################
-    ################## Historical Data
-    #########################################################################
-
-    def reqHistoricalData(self, reqId:TickerId , contract:Contract, endDateTime:str,
-                          durationStr:str, barSizeSetting:str, whatToShow:str,
-                          useRTH:int, formatDate:int, keepUpToDate:bool, chartOptions:TagValueList):
-        """Requests contracts' historical data. When requesting historical data, a
-        finishing time and date is required along with a duration string. The
-        resulting bars will be returned in EWrapper.historicalData()
-
-        reqId:TickerId - The id of the request. Must be a unique value. When the
-            market data returns, it whatToShowill be identified by this tag. This is also
-            used when canceling the market data.
-        contract:Contract - This object contains a description of the contract for which
-            market data is being requested.
-        endDateTime:str - Defines a query end date and time at any point during the past 6 mos.
-            Valid values include any date/time within the past six months in the format:
-            yyyymmdd HH:mm:ss ttt
-
-            where "ttt" is the optional time zone.
-        durationStr:str - Set the query duration up to one week, using a time unit
-            of seconds, days or weeks. Valid values include any integer followed by a space
-            and then S (seconds), D (days) or W (week). If no unit is specified, seconds is used.
-        barSizeSetting:str - Specifies the size of the bars that will be returned (within IB/TWS listimits).
-            Valid values include:
-            1 sec
-            5 secs
-            15 secs
-            30 secs
-            1 min
-            2 mins
-            3 mins
-            5 mins
-            15 mins
-            30 mins
-            1 hour
-            1 day
-        whatToShow:str - Determines the nature of data beinging extracted. Valid values include:
-
-            TRADES
-            MIDPOINT
-            BID
-            ASK
-            BID_ASK
-            HISTORICAL_VOLATILITY
-            OPTION_IMPLIED_VOLATILITY
-        useRTH:int - Determines whether to return all data available during the requested time span,
-            or only data that falls within regular trading hours. Valid values include:
-
-            0 - all data is returned even where the market in question was outside of its
-            regular trading hours.
-            1 - only data within the regular trading hours is returned, even if the
-            requested time span falls partially or completely outside of the RTH.
-        formatDate: int - Determines the date format applied to returned bars. validd values include:
-
-            1 - dates applying to bars returned in the format: yyyymmdd{space}{space}hh:mm:dd
-            2 - dates are returned as a long integer specifying the number of seconds since
-                1/1/1970 GMT.
-        chartOptions:TagValueList - For internal use only. Use default value XYZ. """
-
-
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.event_handler.error(reqId, NOT_CONNECTED.code(),
-                                     NOT_CONNECTED.msg())
-            return
-
-        VERSION = 6
-
-        # send req mkt data msg
-        flds = []
-        flds += [make_field(Outgoing.REQ_HISTORICAL_DATA),]
-        flds += [make_field(reqId),]
-
-        # send contract fields
-        flds += [make_field(contract.conId),]
-        flds += [make_field(contract.symbol),
-            make_field(contract.secType),
-            make_field(contract.lastTradeDateOrContractMonth),
-            make_field(contract.strike),
-            make_field(contract.right),
-            make_field(contract.multiplier),
-            make_field(contract.exchange),
-            make_field(contract.primaryExchange),
-            make_field(contract.currency),
-            make_field(contract.localSymbol)]
-        flds += [make_field( contract.tradingClass),]
-        flds += [make_field(contract.includeExpired), # srv v31 and above
-            make_field(endDateTime), # srv v20 and above
-            make_field(barSizeSetting), # srv v20 and above
-            make_field(durationStr),
-            make_field(useRTH),
-            make_field(whatToShow),
-            make_field(formatDate)] # srv v16 and above
-
-        # Send combo legs for BAG requests
-        if contract.secType == "BAG":
-            flds += [make_field(len(contract.comboLegs)),]
-            for comboLeg in contract.comboLegs:
-                flds += [make_field( comboLeg.conId),
-                    make_field( comboLeg.ratio),
-                    make_field( comboLeg.action),
-                    make_field( comboLeg.exchange)]
-
-        flds += [make_field(keepUpToDate), ]
-
-        # send chartOptions parameter
-        chartOptionsStr = ""
-        if chartOptions:
-            for tagValue in chartOptions:
-                chartOptionsStr += str(tagValue)
-        flds += [make_field( chartOptionsStr),]
-
-        msg = "".join(flds)
-        self.send_msg(msg)
-
-    def cancelHistoricalData(self, reqId:TickerId):
-        """Used if an internet disconnect has occurred or the results of a query
-        are otherwise delayed and the application is no longer interested in receiving
-        the data.
-
-        reqId:TickerId - The ticker ID. Must be a unique value."""
-
-
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        VERSION = 1
-
-        msg = make_field(Outgoing.CANCEL_HISTORICAL_DATA) \
-           + make_field(VERSION)   \
-           + make_field(reqId)
-
-        self.send_msg(msg)
-
-    # Note that formatData parameter affects intraday bars only
-    # 1-day bars always return with date in YYYYMMDD format
-
-    def reqHeadTimeStamp(self, reqId:TickerId, contract:Contract,
-                                                 whatToShow: str, useRTH: int, formatDate: int):
-
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        flds = []
-        flds += [make_field(Outgoing.REQ_HEAD_TIMESTAMP),
-            make_field(reqId),
-            make_field(contract.conId),
-            make_field(contract.symbol),
-            make_field(contract.secType),
-            make_field(contract.lastTradeDateOrContractMonth),
-            make_field(contract.strike),
-            make_field(contract.right),
-            make_field(contract.multiplier),
-            make_field(contract.exchange),
-            make_field(contract.primaryExchange),
-            make_field(contract.currency),
-            make_field(contract.localSymbol),
-            make_field(contract.tradingClass),
-            make_field(contract.includeExpired),
-            make_field(useRTH),
-            make_field(whatToShow),
-            make_field(formatDate) ]
-
-        msg = "".join(flds)
-        self.send_msg(msg)
-
-    def cancelHeadTimeStamp(self, reqId: TickerId):
-
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        flds = []
-        flds += [make_field(Outgoing.CANCEL_HEAD_TIMESTAMP),
-                 make_field(reqId) ]
-
-        msg = "".join(flds)
-        self.send_msg(msg)
-
-    def reqHistogramData(self, tickerId: int, contract: Contract,
-                     useRTH: bool, timePeriod: str):
-
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        flds = []
-        flds += [make_field(Outgoing.REQ_HISTOGRAM_DATA),
-            make_field(tickerId),
-            make_field(contract.conId),
-            make_field(contract.symbol),
-            make_field(contract.secType),
-            make_field(contract.lastTradeDateOrContractMonth),
-            make_field(contract.strike),
-            make_field(contract.right),
-            make_field(contract.multiplier),
-            make_field(contract.exchange),
-            make_field(contract.primaryExchange),
-            make_field(contract.currency),
-            make_field(contract.localSymbol),
-            make_field(contract.tradingClass),
-            make_field(contract.includeExpired),
-            make_field(useRTH),
-            make_field(timePeriod)]
-
-        msg = "".join(flds)
-        self.send_msg(msg)
-
-    def cancelHistogramData(self, tickerId: int):
-
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        msg = make_field(Outgoing.CANCEL_HISTOGRAM_DATA) + make_field(tickerId)
-
-        self.send_msg(msg)
-
-    def reqHistoricalTicks(self, reqId: int, contract: Contract, startDateTime: str,
-                           endDateTime: str, numberOfTicks: int, whatToShow: str, useRth: int,
-                           ignoreSize: bool, miscOptions: TagValueList):
-
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        flds = []
-        flds += [make_field(Outgoing.REQ_HISTORICAL_TICKS),
-                 make_field(reqId),
-                 make_field(contract.conId),
-                 make_field(contract.symbol),
-                 make_field(contract.secType),
-                 make_field(contract.lastTradeDateOrContractMonth),
-                 make_field(contract.strike),
-                 make_field(contract.right),
-                 make_field(contract.multiplier),
-                 make_field(contract.exchange),
-                 make_field(contract.primaryExchange),
-                 make_field(contract.currency),
-                 make_field(contract.localSymbol),
-                 make_field(contract.tradingClass),
-                 make_field(contract.includeExpired),
-                 make_field(startDateTime),
-                 make_field(endDateTime),
-                 make_field(numberOfTicks),
-                 make_field(whatToShow),
-                 make_field(useRth),
-                 make_field(ignoreSize)]
-
-        miscOptionsString = ""
-        if miscOptions:
-            for tagValue in miscOptions:
-                miscOptionsString += str(tagValue)
-        flds += [make_field(miscOptionsString),]
-
-        msg = "".join(flds)
-        self.send_msg(msg)
-
 
     #########################################################################
     ################## Market Scanners
