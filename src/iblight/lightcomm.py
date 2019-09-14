@@ -1,11 +1,15 @@
 import struct
+import sys
+from typing import Tuple
 
-from ibapi.common import UNSET_INTEGER, UNSET_DOUBLE
 from iblight.lightconnection import logger
 from iblight.refibroker import Outgoing
 
+UNSET_INTEGER = 2 ** 31 - 1
+UNSET_DOUBLE = sys.float_info.max
 
-def make_msg(text) -> bytes:
+
+def make_msg(text: str) -> bytes:
     """ adds the length prefix """
     msg = struct.pack("!I%ds" % len(text), len(text), str.encode(text))
     return msg
@@ -29,7 +33,6 @@ def make_field(val) -> str:
 
 
 def make_field_handle_empty(val) -> str:
-
     if val is None:
         raise ValueError("Cannot send None to TWS")
 
@@ -39,21 +42,20 @@ def make_field_handle_empty(val) -> str:
     return make_field(val)
 
 
-def read_msg(buf: bytes) -> tuple:
+def read_msg(buf: bytes) -> Tuple[int, str, bytes]:
     """ first the size prefix and then the corresponding msg payload """
     if len(buf) < 4:
-        return (0, "", buf)
+        return 0, "", buf
     size = struct.unpack("!I", buf[0:4])[0]
     logger.debug("read_msg: size: %d", size)
     if len(buf) - 4 >= size:
-        text = struct.unpack("!%ds" % size, buf[4:4+size])[0]
-        return (size, text, buf[4+size:])
+        text = struct.unpack("!%ds" % size, buf[4:size + 4])[0]
+        return size, text, buf[size + 4:]
     else:
-        return (size, "", buf)
+        return size, "", buf
 
 
-def read_fields(buf: bytes) -> tuple:
-
+def read_fields(buf: bytes) -> Tuple[bytes]:
     if isinstance(buf, str):
         buf = buf.encode()
 

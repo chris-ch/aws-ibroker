@@ -5,20 +5,12 @@ Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is su
 from collections import OrderedDict
 from enum import Enum
 from threading import Thread
+from typing import Tuple
 
 from iblight import lightcomm
 from iblight.lightconnection import LightConnection
 from iblight.lightcomm import make_field, make_field_handle_empty
 from iblight.refibroker import Incoming, Outgoing
-
-"""
-The main class to use from API user's point of view.
-It takes care of almost everything:
-- implementing the requests
-- creating the answer decoder
-- creating the connection to TWS/IBGW
-The user just needs to override EWrapper methods to receive the answers.
-"""
 
 import logging
 import queue
@@ -31,6 +23,14 @@ from ibapi.order import Order
 from ibapi.execution import ExecutionFilter
 from ibapi.scanner import ScannerSubscription
 from ibapi.utils import current_fn_name, BadMessage
+
+"""
+The main class to use from API user's point of view.
+It takes care of almost everything:
+- implementing the requests
+- creating the connection to TWS/IBGW
+The user just needs to override EWrapper methods to receive the answers.
+"""
 
 #TODO: use pylint
 
@@ -94,30 +94,27 @@ class LightReader(Thread):
         #    logger.exception('unhandled exception in LightReader thread')
 
 
-class GenericDecoder(object):
+def process_socket_fields(fields: Tuple[bytes]) -> None:
+    if len(fields) == 0:
+        logger.debug("received empty message with no fields")
+        return
 
-    def __init__(self, server_version):
-        self.serverVersion = server_version
-
-    @staticmethod
-    def interpret(fields):
-        if len(fields) == 0:
-            logger.debug("received empty message with no fields")
-            return
-
-        message_type = Incoming(int(fields[0]))
-        logger.info('received msg id {} with fields: {}'.format(message_type.name, repr(fields[1:])))
+    message_type = Incoming(int(fields[0]))
+    logger.info('received msg id {} with fields: {}'.format(message_type.name, repr(fields[1:])))
 
 
 class IBrokerClientEventHandler(object):
-    
-    def connect_ack(self):
+
+    @staticmethod
+    def connect_ack():
         logger.info('successful socket connection')
-    
-    def connection_closed(self):
+
+    @staticmethod
+    def connection_closed():
         logger.info('socket connection closed')
-    
-    def error(self, req_id: TickerId, error_code: int, error_string: str):
+
+    @staticmethod
+    def error(req_id: TickerId, error_code: int, error_string: str):
         """This event is called when there is an error with the
         communication or when TWS wants to send a message to the client."""
         logger.error("ERROR %s %s %s", req_id, error_code, error_string)
@@ -130,24 +127,22 @@ class LightIBrokerClient(object):
     def __init__(self):
         self.msg_queue = queue.Queue()
         self.event_handler = IBrokerClientEventHandler()
-        self.decoder = None
         self.reset()
 
     def reset(self):
         self.done = False
         self.nKeybIntHard = 0
-        self.conn = None
+        self._socket = None
         self.host = None
         self.port = None
         self.extraAuth = False
         self.client_id = None
-        self.server_version_ = None
+        self._server_version = None
         self.conn_time = None
         self.conn_state = None
         self.opt_capab = ""
         self.asynchronous = False
         self.reader = None
-        self.decode = None
         self.set_conn_state(ConnectionState.DISCONNECTED)
 
     def set_conn_state(self, conn_state: ConnectionState):
@@ -157,17 +152,18 @@ class LightIBrokerClient(object):
 
     def send_msg(self, msg):
         full_msg = lightcomm.make_msg(msg)
-        logger.info("sending %s %s", current_fn_name(1), full_msg)
-        self.conn.send_msg(full_msg)
+        logger.debug("sending %s %s", current_fn_name(1), full_msg)
+        self._socket.send_msg(full_msg)
 
-    def handle_request(self, fnName, fnParams):
-        if 'self' in fnParams:
-            prms = dict(fnParams)
-            del prms['self']
+    @staticmethod
+    def handle_request(func_name, func_params):
+        if 'self' in func_params:
+            params = dict(func_params)
+            del params['self']
         else:
-            prms = fnParams
+            params = func_params
 
-        logger.info("REQUESTOLD %s %s" % (fnName, prms))
+        logger.info("REQUESTOLD %s %s" % (func_name, params))
 
     def connect(self, host, port, clientId):
         """This function must be called before any other. There is no
@@ -191,9 +187,9 @@ class LightIBrokerClient(object):
             self.client_id = clientId
             logger.info("connecting to %s:%d w/ id:%d", self.host, self.port, self.client_id)
 
-            self.conn = LightConnection(self.host, self.port)
+            self._socket = LightConnection(self.host, self.port)
 
-            self.conn.connect()
+            self._socket.connect()
             self.set_conn_state(ConnectionState.CONNECTING)
 
             #TODO: support async mode
@@ -201,24 +197,24 @@ class LightIBrokerClient(object):
             v100prefix = "API\0"
             v100version = "v%d..%d" % (MIN_CLIENT_VER, MAX_CLIENT_VER)
             msg = lightcomm.make_msg(v100version)
-            logger.info("msg %s", msg)
+            logger.debug("msg %s", msg)
             msg2 = str.encode(v100prefix, 'ascii') + msg
-            logger.info("sending %s", msg2)
-            self.conn.send_msg(msg2)
+            logger.debug("sending %s", msg2)
+            self._socket.send_msg(msg2)
 
-            self.decoder = GenericDecoder(self.server_version())
             fields = []
 
             #sometimes I get news before the server version, thus the loop
             while len(fields) != 2:
-                self.decoder.interpret(fields)
-                buf = self.conn.recv_msg()
+                process_socket_fields(fields)
+                buf = self._socket.recv_msg()
                 logger.debug("ANSWER %s", buf)
                 if len(buf) > 0:
                     (size, msg, rest) = lightcomm.read_msg(buf)
                     logger.debug("size:%d msg:%s rest:%s|", size, msg, rest)
                     fields = lightcomm.read_fields(msg)
                     logger.debug("fields %s", fields)
+
                 else:
                     fields = []
 
@@ -226,14 +222,13 @@ class LightIBrokerClient(object):
             server_version = int(server_version)
             logger.info("ANSWER Version:%d time:%s", server_version, conn_time)
             self.conn_time = conn_time
-            self.server_version_ = server_version
-            self.decoder.serverVersion = self.server_version()
+            self._server_version = server_version
 
             self.set_conn_state(ConnectionState.CONNECTED)
 
-            self.reader = LightReader(self.conn, self.msg_queue)
+            self.reader = LightReader(self._socket, self.msg_queue)
             self.reader.start()   # start thread
-            logger.info("sent startApi")
+            logger.info("sent start api")
             self.start_api()
             self.event_handler.connect_ack()
             
@@ -249,15 +244,15 @@ class LightIBrokerClient(object):
         sent."""
 
         self.set_conn_state(ConnectionState.DISCONNECTED)
-        if self.conn is not None:
+        if self._socket is not None:
             logger.info("disconnecting")
-            self.conn.disconnect()
+            self._socket.disconnect()
             self.event_handler.connection_closed()
             self.reset()
 
     def is_connected(self):
         """Call this function to check if there is a connection with TWS"""
-        connConnected = self.conn and self.conn.is_connected()
+        connConnected = self._socket and self._socket.is_connected()
         logger.debug("%s isConn: %s, connConnected: %s" % (id(self), self.conn_state, str(connConnected)))
 
         return ConnectionState.CONNECTED == self.conn_state and connConnected
@@ -289,14 +284,14 @@ class LightIBrokerClient(object):
                     else:
                         fields = lightcomm.read_fields(text)
                         logger.debug("fields %s", fields)
-                        self.decoder.interpret(fields)
+                        process_socket_fields(fields)
                 except (KeyboardInterrupt, SystemExit):
                     logger.info("detected KeyboardInterrupt, SystemExit")
                     self.keyboard_interrupt()
                     self.keyboard_interrupt_hard()
                 except BadMessage:
                     logger.info("BadMessage")
-                    self.conn.disconnect()
+                    self._socket.disconnect()
 
                 logger.debug("conn:%d queue.sz:%d",
                              self.is_connected(),
@@ -307,7 +302,7 @@ class LightIBrokerClient(object):
     def server_version(self):
         """Returns the version of the TWS instance to which the API
         application is connected."""
-        return self.server_version_
+        return self._server_version
 
     def tws_connection_time(self):
         """Returns the time the API application made a connection to TWS."""

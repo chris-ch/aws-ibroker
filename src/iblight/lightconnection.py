@@ -8,8 +8,29 @@ import sys
 import threading
 import logging
 
-from ibapi.common import NO_VALID_ID
-from ibapi.errors import FAIL_CREATE_SOCK, CONNECT_FAIL
+logger = logging.getLogger(__name__)
+
+
+class CodeMsgPair:
+    def __init__(self, code, msg):
+        self.errorCode = code
+        self.errorMsg = msg
+
+    def code(self):
+        return self.errorCode
+
+    def msg(self):
+        return self.errorMsg
+
+
+NO_VALID_ID = -1
+FAIL_CREATE_SOCK = CodeMsgPair(520, "Failed to create socket")
+CONNECT_FAIL = CodeMsgPair(502,
+                           """Couldn't connect to TWS. Confirm that \"Enable ActiveX and Socket EClients\" 
+is enabled and connection port is the same as \"Socket Port\" on the 
+TWS \"Edit->Global Configuration...->API->Settings\" menu. Live Trading ports: 
+TWS: 7496; IB Gateway: 4001. Simulated Trading ports for new installations 
+of version 954.1 or newer:  TWS: 7497; IB Gateway: 4002""")
 
 """
 Just a thin wrapper around a socket.
@@ -17,75 +38,71 @@ It allows us to keep some other info along with it.
 """
 
 
-
-#TODO: support SSL !!
-
-logger = logging.getLogger(__name__)
+# TODO: support SSL !!
 
 
 class LightConnection(object):
 
     def __init__(self, host, port):
-        self.host = host
-        self.port = port
-        self.socket = None
-        self.wrapper = None
-        self.lock = threading.Lock()
+        self._host = host
+        self._port = port
+        self._socket = None
+        self._wrapper = None  # PROBABLY not used
+        self._lock = threading.Lock()
 
     def connect(self):
         try:
-            self.socket = socket.socket()
-        #TODO: list the exceptions you want to catch
+            self._socket = socket.socket()
+        # TODO: list the exceptions you want to catch
         except socket.error:
-            if self.wrapper:
-                self.wrapper.error(NO_VALID_ID, FAIL_CREATE_SOCK.code(), FAIL_CREATE_SOCK.msg())
+            if self._wrapper:
+                self._wrapper.error(NO_VALID_ID, FAIL_CREATE_SOCK.code(), FAIL_CREATE_SOCK.msg())
 
         try:
-            self.socket.connect((self.host, self.port))
+            self._socket.connect((self._host, self._port))
         except socket.error:
-            if self.wrapper:
-                self.wrapper.error(NO_VALID_ID, CONNECT_FAIL.code(), CONNECT_FAIL.msg())
+            if self._wrapper:
+                self._wrapper.error(NO_VALID_ID, CONNECT_FAIL.code(), CONNECT_FAIL.msg())
 
-        self.socket.settimeout(1)   #non-blocking
+        self._socket.settimeout(1)  # non-blocking
 
     def disconnect(self):
-        self.lock.acquire()
+        self._lock.acquire()
         try:
-            if self.socket is not None:
+            if self._socket is not None:
                 logger.debug("disconnecting")
-                self.socket.close()
-                self.socket = None
+                self._socket.close()
+                self._socket = None
                 logger.debug("disconnected")
-                if self.wrapper:
-                    self.wrapper.connectionClosed()
+                if self._wrapper:
+                    self._wrapper.connectionClosed()
         finally:
-            self.lock.release()
+            self._lock.release()
 
     def is_connected(self):
-        return self.socket is not None
+        return self._socket is not None
 
-    def send_msg(self, msg):
-
+    def send_msg(self, msg: bytes) -> int:
         logger.debug("acquiring lock")
-        self.lock.acquire()
+        self._lock.acquire()
         logger.debug("acquired lock")
         if not self.is_connected():
-            logger.debug("sendMsg attempted while not connected, releasing lock")
-            self.lock.release()
+            logger.debug("send_msg attempted while not connected, releasing lock")
+            self._lock.release()
             return 0
         try:
-            nSent = self.socket.send(msg)
+            status = self._socket.send(msg)
         except socket.error:
             logger.debug("exception from sendMsg %s", sys.exc_info())
             raise
         finally:
             logger.debug("releasing lock")
-            self.lock.release()
+            self._lock.release()
             logger.debug("release lock")
 
-        logger.debug("sendMsg: sent: %d", nSent)
+        logger.debug("send_msg: sent: %d", status)
 
-        return nSent
+        return status
 
     def recv_msg(self):
         if not self.is_connected():
@@ -110,8 +127,8 @@ class LightConnection(object):
         cont = True
         allbuf = b""
 
-        while cont and self.socket is not None:
-            buf = self.socket.recv(4096)
+        while cont and self._socket is not None:
+            buf = self._socket.recv(4096)
             allbuf += buf
             logger.debug("len %d raw:%s|", len(buf), buf)
 
@@ -119,4 +136,3 @@ class LightConnection(object):
                 cont = False
 
         return allbuf
-
