@@ -3,18 +3,19 @@ Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is su
  and conditions of the IB API Non-Commercial License or the IB API Commercial License, as applicable.
 """
 
+import socket
+import sys
+import threading
+import logging
+
+from ibapi.common import NO_VALID_ID
+from ibapi.errors import FAIL_CREATE_SOCK, CONNECT_FAIL
+
 """
 Just a thin wrapper around a socket.
 It allows us to keep some other info along with it.
 """
 
-
-import socket
-import threading
-import logging
-
-from ibapi.common import * # @UnusedWildImport
-from ibapi.errors import * # @UnusedWildImport
 
 
 #TODO: support SSL !!

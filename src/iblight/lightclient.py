@@ -63,38 +63,40 @@ class ConnectionState(Enum):
 
 
 class LightReader(Thread):
+
     def __init__(self, conn, msg_queue):
         super().__init__()
         self.conn = conn
         self.msg_queue = msg_queue
 
     def run(self):
-        try:
-            buf = b""
-            while self.conn.is_connected():
-                data = self.conn.recv_msg()
-                logger.debug("reader loop, recvd size %d", len(data))
-                buf += data
+        ##try:
+        buf = b""
+        while self.conn.is_connected():
+            data = self.conn.recv_msg()
+            logger.debug("reader loop, recvd size %d", len(data))
+            buf += data
 
-                while len(buf) > 0:
-                    (size, msg, buf) = lightcomm.read_msg(buf)
-                    logger.info("size:%d msg.size:%d msg:|%s| buf:%s|", size, len(msg), buf, "|")
+            while len(buf) > 0:
+                (size, msg, buf) = lightcomm.read_msg(buf)
+                logger.debug("size:%d msg.size:%d msg:|%s| buf:%s|", size, len(msg), buf, "|")
 
-                    if msg:
-                        self.msg_queue.put(msg)
-                    else:
-                        logger.info("more incoming packet(s) are needed ")
-                        break
+                if msg:
+                    self.msg_queue.put(msg)
 
-            logger.debug("LightReader thread finished")
-        except:
-            logger.exception('unhandled exception in LightReader thread')
+                else:
+                    logger.info("more incoming packet(s) are needed ")
+                    break
+
+        logger.debug("LightReader thread finished")
+
+        #except:
+        #    logger.exception('unhandled exception in LightReader thread')
 
 
 class GenericDecoder(object):
 
-    def __init__(self, wrapper, server_version):
-        self.wrapper = wrapper
+    def __init__(self, server_version):
         self.serverVersion = server_version
 
     @staticmethod
@@ -107,7 +109,7 @@ class GenericDecoder(object):
         logger.info('received msg id {} with fields: {}'.format(message_type.name, repr(fields[1:])))
 
 
-class Publisher(object):
+class IBrokerClientEventHandler(object):
     
     def connect_ack(self):
         logger.info('successful socket connection')
@@ -127,7 +129,7 @@ class LightIBrokerClient(object):
 
     def __init__(self):
         self.msg_queue = queue.Queue()
-        self.wrapper = Publisher()
+        self.event_handler = IBrokerClientEventHandler()
         self.decoder = None
         self.reset()
 
@@ -204,7 +206,7 @@ class LightIBrokerClient(object):
             logger.info("sending %s", msg2)
             self.conn.send_msg(msg2)
 
-            self.decoder = GenericDecoder(self.wrapper, self.server_version())
+            self.decoder = GenericDecoder(self.server_version())
             fields = []
 
             #sometimes I get news before the server version, thus the loop
@@ -233,10 +235,10 @@ class LightIBrokerClient(object):
             self.reader.start()   # start thread
             logger.info("sent startApi")
             self.start_api()
-            self.wrapper.connect_ack()
+            self.event_handler.connect_ack()
             
         except socket.error:
-            self.wrapper.error(NO_VALID_ID, CONNECT_FAIL.code(), CONNECT_FAIL.msg())
+            self.event_handler.error(NO_VALID_ID, CONNECT_FAIL.code(), CONNECT_FAIL.msg())
             logger.info("could not connect")
             self.disconnect()
             self.done = True
@@ -250,7 +252,7 @@ class LightIBrokerClient(object):
         if self.conn is not None:
             logger.info("disconnecting")
             self.conn.disconnect()
-            self.wrapper.connection_closed()
+            self.event_handler.connection_closed()
             self.reset()
 
     def is_connected(self):
@@ -279,8 +281,7 @@ class LightIBrokerClient(object):
                     try:
                         text = self.msg_queue.get(block=True, timeout=0.2)
                         if len(text) > MAX_MSG_LEN:
-                            self.wrapper.error(NO_VALID_ID, BAD_LENGTH.code(),
-                                "%s:%d:%s" % (BAD_LENGTH.msg(), len(text), text))
+                            self.event_handler.error(NO_VALID_ID, BAD_LENGTH.code(), "%s:%d:%s" % (BAD_LENGTH.msg(), len(text), text))
                             self.disconnect()
                             break
                     except queue.Empty:
@@ -314,7 +315,7 @@ class LightIBrokerClient(object):
 
     def request_ibroker(self, command: Outgoing, args: OrderedDict):
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         logger.info("REQUEST {} {}".format(command.name, args))
@@ -329,7 +330,7 @@ class LightIBrokerClient(object):
         the TWS/IB Gateway. """
         self.request_ibroker(Outgoing.START_API, OrderedDict(version=2, client_id=self.client_id, opt_capab=self.opt_capab))
 
-    def reqMarketDataType(self, market_data_type: int):
+    def req_market_data_type(self, market_data_type: int):
         """The API can receive frozen market data from Trader
         Workstation. Frozen market data is the last data recorded in our system.
         During normal trading hours, the API receives real-time market data. If
@@ -342,7 +343,7 @@ class LightIBrokerClient(object):
             frozen market data"""
         self.request_ibroker(Outgoing.REQ_MARKET_DATA_TYPE, OrderedDict(version=1, market_data_type=market_data_type))
 
-    def reqMktData(self, req_id: TickerId, contract: Contract, generic_tick_list: str, snapshot: bool, regulatory_snapshot: bool):
+    def req_market_data(self, req_id: TickerId, contract: Contract, generic_tick_list: str, snapshot: bool, regulatory_snapshot: bool):
         """Call this function to request market data. The market data
         will be returned by the tickPrice and tickSize events.
 
@@ -364,46 +365,46 @@ class LightIBrokerClient(object):
         mktDataOptions:TagValueList - For internal use only.
             Use default value XYZ. """
 
-        # send req mkt data msg
-        VERSION = 11
-        flds = [make_field(Outgoing.REQ_MKT_DATA), make_field(VERSION), make_field(req_id),
-                make_field(contract.conId),
-                    make_field(contract.symbol),
-                    make_field(contract.secType),
-                    make_field(contract.lastTradeDateOrContractMonth),
-                    make_field(contract.strike),
-                    make_field(contract.right),
-                    make_field(contract.multiplier),
-                    make_field(contract.exchange),
-                    make_field(contract.primaryExchange),
-                    make_field(contract.currency),
-                    make_field(contract.localSymbol),
-                    make_field(contract.tradingClass)
-        ]
+        fields = OrderedDict(version=11,
+                             req_id=req_id,
+                             con_id=contract.conId,
+                             symbol=contract.symbol,
+                             security_type=contract.secType,
+                             last_trade_or_contact_month=contract.lastTradeDateOrContractMonth,
+                             strike=contract.strike,
+                             right=contract.right,
+                             multiplier=contract.multiplier,
+                             exchange=contract.exchange,
+                             primary_exchange=contract.primaryExchange,
+                             currency=contract.currency,
+                             local_symbol=contract.localSymbol,
+                             trading_class=contract.tradingClass,
+                             )
 
         # Send combo legs for BAG requests (srv v8 and above)
         if contract.secType == "BAG":
             comboLegsCount = len(contract.comboLegs) if contract.comboLegs else 0
-            flds += [make_field(comboLegsCount),]
+            fields['combo_legs_count'] = comboLegsCount
             for comboLeg in contract.comboLegs:
-                    flds += [make_field(comboLeg.conId), make_field(comboLeg.ratio), make_field(comboLeg.action),
-                        make_field(comboLeg.exchange)]
+                fields['combo_leg_con_id'] = comboLeg.conId
+                fields['combo_leg_ratio'] = comboLeg.ratio
+                fields['combo_leg_action'] = comboLeg.action
+                fields['combo_leg_exchange'] = comboLeg.exchange
 
         if contract.deltaNeutralContract:
-            flds += [make_field(True),
-                make_field(contract.deltaNeutralContract.conId),
-                make_field(contract.deltaNeutralContract.delta),
-                make_field(contract.deltaNeutralContract.price)]
+            fields['delta_neutral_contract_flag'] = True
+            fields['delta_neutral_contract_con_id'] = contract.deltaNeutralContract.conId
+            fields['delta_neutral_contract_delta'] = contract.deltaNeutralContract.delta
+            fields['delta_neutral_contract_price'] = contract.deltaNeutralContract.price
+
         else:
-            flds += [make_field(False)]
+            fields['delta_neutral_contract_flag'] = False
 
-        flds += [make_field(generic_tick_list), make_field(snapshot) + make_field(regulatory_snapshot)]
-
-        mktDataOptionsStr = ""
-        flds += [make_field(mktDataOptionsStr)]
-
-        msg = "".join(flds)
-        self.send_msg(msg)
+        fields['generic_tick_list'] = generic_tick_list
+        fields['snapshot'] = snapshot
+        fields['regulatory_snapshot'] = regulatory_snapshot
+        fields['mkt_data_options_str'] = ''
+        self.request_ibroker(Outgoing.REQ_MKT_DATA, fields)
 
     def set_server_log_level(self, log_level: int):
         """The default detail level is ERROR. For more details, see API
@@ -429,7 +430,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 2
@@ -447,7 +448,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         msg = make_field(Outgoing.REQ_SMART_COMPONENTS) \
@@ -460,7 +461,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         msg = make_field(Outgoing.REQ_MARKET_RULE) \
@@ -473,7 +474,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         msg = make_field(Outgoing.REQ_TICK_BY_TICK_DATA)\
@@ -500,7 +501,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         msg = make_field(Outgoing.CANCEL_TICK_BY_TICK_DATA) \
@@ -527,7 +528,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 3
@@ -575,7 +576,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -601,7 +602,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 3
@@ -650,7 +651,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -683,7 +684,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
 
@@ -734,7 +735,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(orderId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(orderId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 45
@@ -1032,7 +1033,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -1057,7 +1058,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -1083,7 +1084,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -1106,7 +1107,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -1127,7 +1128,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -1150,7 +1151,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -1181,7 +1182,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 2
@@ -1254,7 +1255,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -1276,7 +1277,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -1294,7 +1295,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -1311,7 +1312,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -1330,7 +1331,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -1349,7 +1350,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -1368,7 +1369,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -1388,7 +1389,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -1409,7 +1410,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         msg = make_field(Outgoing.REQ_PNL) \
@@ -1424,7 +1425,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
 
@@ -1438,7 +1439,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         msg = make_field(Outgoing.REQ_PNL_SINGLE) \
@@ -1454,7 +1455,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         msg = make_field(Outgoing.CANCEL_PNL_SINGLE) \
@@ -1485,7 +1486,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 3
@@ -1528,7 +1529,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 8
@@ -1572,7 +1573,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         msg = make_field(Outgoing.REQ_MKT_DEPTH_EXCHANGES)
@@ -1603,7 +1604,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 5
@@ -1655,7 +1656,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -1689,7 +1690,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -1707,7 +1708,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -1731,7 +1732,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -1755,7 +1756,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -1782,7 +1783,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -1860,8 +1861,8 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(reqId, NOT_CONNECTED.code(),
-                               NOT_CONNECTED.msg())
+            self.event_handler.error(reqId, NOT_CONNECTED.code(),
+                                     NOT_CONNECTED.msg())
             return
 
         VERSION = 6
@@ -1924,7 +1925,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -1944,7 +1945,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         flds = []
@@ -1975,7 +1976,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         flds = []
@@ -1991,7 +1992,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         flds = []
@@ -2021,7 +2022,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         msg = make_field(Outgoing.CANCEL_HISTOGRAM_DATA) + make_field(tickerId)
@@ -2035,7 +2036,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         flds = []
@@ -2082,7 +2083,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -2107,11 +2108,11 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.server_version() < MIN_SERVER_VER_SCANNER_GENERIC_OPTS and scannerSubscriptionFilterOptions is not None:
-            self.wrapper.error(NO_VALID_ID, UPDATE_TWS.code(), UPDATE_TWS.msg() +
+            self.event_handler.error(NO_VALID_ID, UPDATE_TWS.code(), UPDATE_TWS.msg() +
                                " It does not support API scanner subscription generic filter options")
             return
 
@@ -2172,7 +2173,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -2220,7 +2221,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 3
@@ -2267,7 +2268,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -2314,7 +2315,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 2
@@ -2354,7 +2355,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -2375,7 +2376,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         msg = make_field(Outgoing.REQ_NEWS_PROVIDERS)
@@ -2388,7 +2389,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         flds = []
@@ -2415,7 +2416,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         flds = []
@@ -2454,7 +2455,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -2474,7 +2475,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -2500,7 +2501,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -2519,7 +2520,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -2538,11 +2539,11 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if not self.extraAuth:
-            self.wrapper.error(NO_VALID_ID, BAD_MESSAGE.code(), BAD_MESSAGE.msg() +
+            self.event_handler.error(NO_VALID_ID, BAD_MESSAGE.code(), BAD_MESSAGE.msg() +
                     "  Intent to authenticate needs to be expressed during initial connect request.")
             return
 
@@ -2563,7 +2564,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -2583,11 +2584,11 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if not self.extraAuth:
-            self.wrapper.error(NO_VALID_ID, BAD_MESSAGE.code(), BAD_MESSAGE.msg() +
+            self.event_handler.error(NO_VALID_ID, BAD_MESSAGE.code(), BAD_MESSAGE.msg() +
                     "  Intent to authenticate needs to be expressed during initial connect request.")
             return
 
@@ -2609,7 +2610,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -2636,7 +2637,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         flds = []
@@ -2659,7 +2660,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         msg = make_field(Outgoing.REQ_SOFT_DOLLAR_TIERS) \
@@ -2673,7 +2674,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         msg = make_field(Outgoing.REQ_FAMILY_CODES)
@@ -2686,7 +2687,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         msg = make_field(Outgoing.REQ_MATCHING_SYMBOLS) \
@@ -2704,7 +2705,7 @@ class LightIBrokerClient(object):
         self.handle_request(current_fn_name(), vars())
 
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         msg = make_field(Outgoing.REQ_COMPLETED_ORDERS) \
