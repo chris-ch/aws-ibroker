@@ -2,6 +2,7 @@
 Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
  and conditions of the IB API Non-Commercial License or the IB API Commercial License, as applicable.
 """
+from collections import OrderedDict
 from enum import Enum
 from threading import Thread
 
@@ -137,11 +138,11 @@ class LightIBrokerClient(object):
         self.host = None
         self.port = None
         self.extraAuth = False
-        self.clientId = None
-        self.serverVersion_ = None
-        self.connTime = None
+        self.client_id = None
+        self.server_version_ = None
+        self.conn_time = None
         self.conn_state = None
-        self.optCapab = ""
+        self.opt_capab = ""
         self.asynchronous = False
         self.reader = None
         self.decode = None
@@ -164,22 +165,7 @@ class LightIBrokerClient(object):
         else:
             prms = fnParams
 
-        logger.info("REQUEST %s %s" % (fnName, prms))
-
-    def start_api(self):
-        """  Initiates the message exchange between the client application and
-        the TWS/IB Gateway. """
-
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(),
-                               NOT_CONNECTED.msg())
-            return
-
-        VERSION = 2
-        msg = make_field(Outgoing.START_API) + make_field(VERSION) + make_field(self.clientId) + make_field(self.optCapab)
-        self.send_msg(msg)
+        logger.info("REQUESTOLD %s %s" % (fnName, prms))
 
     def connect(self, host, port, clientId):
         """This function must be called before any other. There is no
@@ -200,8 +186,8 @@ class LightIBrokerClient(object):
         try:
             self.host = host
             self.port = port
-            self.clientId = clientId
-            logger.info("connecting to %s:%d w/ id:%d", self.host, self.port, self.clientId)
+            self.client_id = clientId
+            logger.info("connecting to %s:%d w/ id:%d", self.host, self.port, self.client_id)
 
             self.conn = LightConnection(self.host, self.port)
 
@@ -212,7 +198,6 @@ class LightIBrokerClient(object):
 
             v100prefix = "API\0"
             v100version = "v%d..%d" % (MIN_CLIENT_VER, MAX_CLIENT_VER)
-            #v100version = "v%d..%d" % (MIN_CLIENT_VER, 101)
             msg = lightcomm.make_msg(v100version)
             logger.info("msg %s", msg)
             msg2 = str.encode(v100prefix, 'ascii') + msg
@@ -235,11 +220,11 @@ class LightIBrokerClient(object):
                 else:
                     fields = []
 
-            (server_version, conn_time) = fields
+            server_version, conn_time = fields
             server_version = int(server_version)
             logger.info("ANSWER Version:%d time:%s", server_version, conn_time)
-            self.connTime = conn_time
-            self.serverVersion_ = server_version
+            self.conn_time = conn_time
+            self.server_version_ = server_version
             self.decoder.serverVersion = self.server_version()
 
             self.set_conn_state(ConnectionState.CONNECTED)
@@ -256,7 +241,6 @@ class LightIBrokerClient(object):
             self.disconnect()
             self.done = True
 
-
     def disconnect(self):
         """Call this function to terminate the connections with TWS.
         Calling this function does not cancel orders that have already been
@@ -269,7 +253,6 @@ class LightIBrokerClient(object):
             self.wrapper.connection_closed()
             self.reset()
 
-
     def is_connected(self):
         """Call this function to check if there is a connection with TWS"""
         connConnected = self.conn and self.conn.is_connected()
@@ -277,15 +260,14 @@ class LightIBrokerClient(object):
 
         return ConnectionState.CONNECTED == self.conn_state and connConnected
 
-    def keyboardInterrupt(self):
+    def keyboard_interrupt(self):
         #intended to be overloaded
         pass
 
-    def keyboardInterruptHard(self):
+    def keyboard_interrupt_hard(self):
         self.nKeybIntHard += 1
         if self.nKeybIntHard > 5:
             raise SystemExit()
-
 
     def run(self):
         """This is the function that has the message loop."""
@@ -309,8 +291,8 @@ class LightIBrokerClient(object):
                         self.decoder.interpret(fields)
                 except (KeyboardInterrupt, SystemExit):
                     logger.info("detected KeyboardInterrupt, SystemExit")
-                    self.keyboardInterrupt()
-                    self.keyboardInterruptHard()
+                    self.keyboard_interrupt()
+                    self.keyboard_interrupt_hard()
                 except BadMessage:
                     logger.info("BadMessage")
                     self.conn.disconnect()
@@ -324,56 +306,43 @@ class LightIBrokerClient(object):
     def server_version(self):
         """Returns the version of the TWS instance to which the API
         application is connected."""
-        return self.serverVersion_
+        return self.server_version_
 
-    def twsConnectionTime(self):
+    def tws_connection_time(self):
         """Returns the time the API application made a connection to TWS."""
+        return self.conn_time
 
-        return self.connTime
-
-    ##########################################################################
-
-    def setServerLogLevel(self, logLevel:int):
-        """The default detail level is ERROR. For more details, see API
-        Logging."""
-
-        self.handle_request(current_fn_name(), vars())
-
+    def request_ibroker(self, command: Outgoing, args: OrderedDict):
         if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(),
-                               NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
-        VERSION = 1
+        logger.info("REQUEST {} {}".format(command.name, args))
 
-        msg = make_field(Outgoing.SET_SERVER_LOGLEVEL) + make_field(VERSION) + make_field(logLevel)
-
+        msg = ''.join([make_field(field) for field in [command] + list(args.values())])
         self.send_msg(msg)
 
-    def reqCurrentTime(self):
-        """Asks the current system time on the server side."""
-
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(),
-                               NOT_CONNECTED.msg())
-            return
-
-        VERSION = 1
-
-        msg = make_field(Outgoing.REQ_CURRENT_TIME) + make_field(VERSION)
-
-        self.send_msg(msg)
-
-
-    ##########################################################################
-    ################## Market Data
     ##########################################################################
 
-    def reqMktData(self, reqId:TickerId, contract:Contract,
-                    genericTickList:str, snapshot:bool, regulatorySnapshot: bool,
-                    mktDataOptions:TagValueList):
+    def start_api(self):
+        """  Initiates the message exchange between the client application and
+        the TWS/IB Gateway. """
+        self.request_ibroker(Outgoing.START_API, OrderedDict(version=2, client_id=self.client_id, opt_capab=self.opt_capab))
+
+    def reqMarketDataType(self, market_data_type: int):
+        """The API can receive frozen market data from Trader
+        Workstation. Frozen market data is the last data recorded in our system.
+        During normal trading hours, the API receives real-time market data. If
+        you use this function, you are telling TWS to automatically switch to
+        frozen market data after the close. Then, before the opening of the next
+        trading day, market data will automatically switch back to real-time
+        market data.
+
+        marketDataType:int - 1 for real-time streaming market data or 2 for
+            frozen market data"""
+        self.request_ibroker(Outgoing.REQ_MARKET_DATA_TYPE, OrderedDict(version=1, market_data_type=market_data_type))
+
+    def reqMktData(self, req_id: TickerId, contract: Contract, generic_tick_list: str, snapshot: bool, regulatory_snapshot: bool):
         """Call this function to request market data. The market data
         will be returned by the tickPrice and tickSize events.
 
@@ -395,45 +364,30 @@ class LightIBrokerClient(object):
         mktDataOptions:TagValueList - For internal use only.
             Use default value XYZ. """
 
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.wrapper.error(reqId, NOT_CONNECTED.code(),
-                               NOT_CONNECTED.msg())
-            return
-
-        VERSION = 11
-
         # send req mkt data msg
-        flds = []
-        flds += [make_field(Outgoing.REQ_MKT_DATA),
-            make_field(VERSION),
-            make_field(reqId)]
-
-        flds += [make_field(contract.conId),]
-
-        flds += [make_field(contract.symbol),
-            make_field(contract.secType),
-            make_field(contract.lastTradeDateOrContractMonth),
-            make_field(contract.strike),
-            make_field(contract.right),
-            make_field(contract.multiplier), # srv v15 and above
-            make_field(contract.exchange),
-            make_field(contract.primaryExchange), # srv v14 and above
-            make_field(contract.currency),
-            make_field(contract.localSymbol) ] # srv v2 and above
-
-        flds += [make_field(contract.tradingClass),]
+        VERSION = 11
+        flds = [make_field(Outgoing.REQ_MKT_DATA), make_field(VERSION), make_field(req_id),
+                make_field(contract.conId),
+                    make_field(contract.symbol),
+                    make_field(contract.secType),
+                    make_field(contract.lastTradeDateOrContractMonth),
+                    make_field(contract.strike),
+                    make_field(contract.right),
+                    make_field(contract.multiplier),
+                    make_field(contract.exchange),
+                    make_field(contract.primaryExchange),
+                    make_field(contract.currency),
+                    make_field(contract.localSymbol),
+                    make_field(contract.tradingClass)
+        ]
 
         # Send combo legs for BAG requests (srv v8 and above)
         if contract.secType == "BAG":
             comboLegsCount = len(contract.comboLegs) if contract.comboLegs else 0
             flds += [make_field(comboLegsCount),]
             for comboLeg in contract.comboLegs:
-                    flds += [make_field(comboLeg.conId),
-                        make_field( comboLeg.ratio),
-                        make_field( comboLeg.action),
-                        make_field( comboLeg.exchange)]
+                    flds += [make_field(comboLeg.conId), make_field(comboLeg.ratio), make_field(comboLeg.action),
+                        make_field(comboLeg.exchange)]
 
         if contract.deltaNeutralContract:
             flds += [make_field(True),
@@ -441,23 +395,29 @@ class LightIBrokerClient(object):
                 make_field(contract.deltaNeutralContract.delta),
                 make_field(contract.deltaNeutralContract.price)]
         else:
-            flds += [make_field(False),]
+            flds += [make_field(False)]
 
-        flds += [make_field(genericTickList), # srv v31 and above
-            make_field(snapshot)] # srv v35 and above
+        flds += [make_field(generic_tick_list), make_field(snapshot) + make_field(regulatory_snapshot)]
 
-        flds += [make_field(regulatorySnapshot),]
-
-        # send mktDataOptions parameter
-        #current doc says this part if for "internal use only" -> won't support it
-        if mktDataOptions:
-            raise NotImplementedError("not supported")
         mktDataOptionsStr = ""
-        flds += [make_field(mktDataOptionsStr),]
+        flds += [make_field(mktDataOptionsStr)]
 
         msg = "".join(flds)
         self.send_msg(msg)
 
+    def set_server_log_level(self, log_level: int):
+        """The default detail level is ERROR. For more details, see API
+        Logging."""
+        self.request_ibroker(Outgoing.SET_SERVER_LOGLEVEL, OrderedDict(version=1, log_level=log_level))
+
+    def req_current_time(self):
+        """Asks the current system time on the server side."""
+        self.request_ibroker(Outgoing.REQ_CURRENT_TIME, OrderedDict(version=1))
+
+
+    ##########################################################################
+    ################## Market Data
+    ##########################################################################
 
     def cancelMktData(self, reqId:TickerId):
         """After calling this function, market data for the specified id
@@ -479,36 +439,6 @@ class LightIBrokerClient(object):
         flds += [make_field(Outgoing.CANCEL_MKT_DATA),
             make_field(VERSION),
             make_field(reqId)]
-
-        msg = "".join(flds)
-        self.send_msg(msg)
-
-
-    def reqMarketDataType(self, marketDataType:int):
-        """The API can receive frozen market data from Trader
-        Workstation. Frozen market data is the last data recorded in our system.
-        During normal trading hours, the API receives real-time market data. If
-        you use this function, you are telling TWS to automatically switch to
-        frozen market data after the close. Then, before the opening of the next
-        trading day, market data will automatically switch back to real-time
-        market data.
-
-        marketDataType:int - 1 for real-time streaming market data or 2 for
-            frozen market data"""
-
-        self.handle_request(current_fn_name(), vars())
-
-        if not self.is_connected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        VERSION = 1
-
-        # send req mkt data msg
-        flds = []
-        flds += [make_field(Outgoing.REQ_MARKET_DATA_TYPE),
-            make_field(VERSION),
-            make_field(marketDataType)]
 
         msg = "".join(flds)
         self.send_msg(msg)

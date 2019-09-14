@@ -18,7 +18,7 @@ def main():
     contract.currency = 'USD'
     contract.primaryExchange = 'NASDAQ'
     app.reqMarketDataType(4)  # Switch to delayed forzen data if live is not available
-    app.reqMktData(1, contract, '', False, False, [])
+    app.reqMktData(1, contract, '', False, False)
     app.run()
 
 

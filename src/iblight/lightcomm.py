@@ -39,7 +39,7 @@ def make_field_handle_empty(val) -> str:
     return make_field(val)
 
 
-def read_msg(buf:bytes) -> tuple:
+def read_msg(buf: bytes) -> tuple:
     """ first the size prefix and then the corresponding msg payload """
     if len(buf) < 4:
         return (0, "", buf)
@@ -52,7 +52,7 @@ def read_msg(buf:bytes) -> tuple:
         return (size, "", buf)
 
 
-def read_fields(buf:bytes) -> tuple:
+def read_fields(buf: bytes) -> tuple:
 
     if isinstance(buf, str):
         buf = buf.encode()
