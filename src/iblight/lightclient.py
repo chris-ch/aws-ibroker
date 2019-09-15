@@ -5,20 +5,19 @@ Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is su
 import logging
 import queue
 import socket
+import sys
 from collections import OrderedDict
 from enum import Enum
 from threading import Thread
 from typing import Tuple
 
-from ibapi.connection import MAX_MSG_LEN, BAD_LENGTH, UPDATE_TWS, BAD_MESSAGE
 from ibapi.execution import ExecutionFilter
 from ibapi.order import Order
-from ibapi.scanner import ScannerSubscription
-from ibapi.utils import current_fn_name, BadMessage
 from iblight import lightcomm
 from iblight.lightcomm import make_field, make_field_handle_empty, UNSET_DOUBLE, UNSET_INTEGER
-from iblight.lightconnection import LightConnection, NO_VALID_ID, NOT_CONNECTED, CONNECT_FAIL
-from iblight.model import Contract
+from iblight.lightconnection import LightConnection, NO_VALID_ID, NOT_CONNECTED, CONNECT_FAIL, BAD_MESSAGE, UPDATE_TWS, \
+    BAD_LENGTH
+from iblight.model import Contract, ScannerSubscription
 from iblight.refibroker import Incoming, Outgoing
 
 """
@@ -53,6 +52,12 @@ MIN_SERVER_VER_PRICE_MGMT_ALGO = 151
 
 MIN_CLIENT_VER = 100
 MAX_CLIENT_VER = MIN_SERVER_VER_PRICE_MGMT_ALGO
+MAX_MSG_LEN = 0xFFFFFF # 16Mb - 1byte
+
+
+def current_fn_name(parent_idx = 0):
+    #depth is 1 bc this is already a fn, so we need the caller
+    return sys._getframe(1 + parent_idx).f_code.co_name
 
 
 class ConnectionState(Enum):
@@ -282,9 +287,6 @@ class LightIBrokerClient(object):
                     logger.info("detected KeyboardInterrupt, SystemExit")
                     self.keyboard_interrupt()
                     self.keyboard_interrupt_hard()
-                except BadMessage:
-                    logger.info("BadMessage")
-                    self._socket.disconnect()
 
                 logger.debug("conn:%d queue.sz:%d",
                              self.is_connected(),
