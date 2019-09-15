@@ -2,9 +2,9 @@ import json
 import logging
 import threading
 
-from flask import Flask, request
-from flask_restful import Resource, Api
-from flask_restful import reqparse
+from werkzeug.wrappers import Request, Response
+from werkzeug.serving import run_simple
+from jsonrpc import JSONRPCResponseManager, dispatcher
 
 from iblight.lightclient import LightIBrokerClient
 from iblight.model import Contract
@@ -49,77 +49,75 @@ def get_ibroker_client():
     return _ibroker_client
 
 
-class IBrokerMarketDataType(Resource):
-
-    def get(self, data_type_id: int):
-        get_ibroker_client().req_market_data_type(
-            data_type_id)  # 4 = switch to delayed frozen data if live is not available
-        return {'status-code': 'OK'}
-
-
-class IBrokerMarketData(Resource):
-
-    def get(self, req_id: int):
-        contract = Contract()
-        contract.symbol = 'AAPL'
-        contract.secType = 'STK'
-        contract.exchange = 'SMART'
-        contract.currency = 'USD'
-        contract.primaryExchange = 'NASDAQ'
-        get_ibroker_client().req_market_data(req_id, contract, '', False, False)
-        return {'status-code': 'OK'}
+def market_data_start(req_id: int):
+    contract = Contract()
+    contract.symbol = 'AAPL'
+    contract.sec_type = 'STK'
+    contract.exchange = 'SMART'
+    contract.currency = 'USD'
+    contract.primary_exchange = 'NASDAQ'
+    get_ibroker_client().req_market_data(req_id, contract, '', False, False)
+    return {'status-code': 'OK'}
 
 
-class IBrokerPortfolioPositions(Resource):
-
-    def get(self):
-        get_ibroker_client().req_positions()
-        return {'status-code': 'OK'}
+def market_data_stop(req_id: int):
+    get_ibroker_client().cancel_market_data(req_id)
+    return {'status-code': 'OK'}
 
 
-class IBrokerAccountSummary(Resource):
-
-    def get(self, req_id: int, group_name: str, tags: str):
-        get_ibroker_client().req_account_summary(req_id, group_name=group_name, tags=tags)
-        return {'status-code': 'OK'}
+def portfolio_positions():
+    get_ibroker_client().req_positions()
+    return {'status-code': 'OK'}
 
 
-class IBrokerContract(Resource):
-
-    def post(self):
-        json_data = request.get_json(force=True)
-        posted_contract = ContractSchema().load(json_data['contract'])
-        get_ibroker_client().req_contract_details(req_id=json_data['req_id'], contract=posted_contract)
-        return {'status-code': 'OK'}
+def market_data_type(data_type_id: int):
+    get_ibroker_client().req_market_data_type(
+        data_type_id)  # 4 = switch to delayed frozen data if live is not available
+    return {'status-code': 'OK'}
 
 
-class IBrokerContractSmartStockUS(Resource):
+def account_start(req_id: int, group_name: str, tags: str):
+    """
+    Starts sending account summary notifications.
+    @param req_id request id
+    @param group_name the group name, such as "All"
+    @param tags the fields, such as "NetLiquidation"
+    @return a status
+    """
+    get_ibroker_client().req_account_summary(req_id=req_id, group_name=group_name, tags=tags)
+    return {'status-code': 'OK'}
 
-    def get(self, req_id: int, symbol: str):
-        contract = Contract()
-        contract.symbol = symbol
-        contract.secType = "STK"
-        contract.currency = "USD"
-        contract.exchange = "SMART"
-        get_ibroker_client().req_contract_details(req_id, contract=contract)
-        return {'status-code': 'OK'}
+
+def account_stop(req_id: int):
+    """
+    Stops sending account summary notifications.
+    @param req_id request id
+    :param req_id:
+    :return:
+    """
+    get_ibroker_client().cancel_account_summary(req_id)
+    return {'status-code': 'OK'}
+
+
+@Request.application
+def application(request):
+    # Dispatcher is dictionary {<method_name>: callable}
+    dispatcher["account-start"] = account_start
+    dispatcher["account-stop"] = account_stop
+    dispatcher["market-data-type"] = market_data_type
+    dispatcher["market-data-start"] = market_data_start
+    dispatcher["market-data-stop"] = market_data_stop
+    dispatcher["portfolio-positions"] = portfolio_positions
+    response = JSONRPCResponseManager.handle(request.data, dispatcher)
+    return Response(response.json, mimetype='application/json')
 
 
 def main():
-    # TODO: REST requests to EClient
-
     set_ibroker_params('127.0.0.1', 4003, 0)
-    app = Flask(__name__)
-    api = Api(app)
 
-    api.add_resource(IBrokerMarketDataType, '/mkt-data-type/<int:data_type_id>')
-    api.add_resource(IBrokerMarketData, '/mkt-data/<int:req_id>')
-    api.add_resource(IBrokerPortfolioPositions, '/positions')
-    api.add_resource(IBrokerAccountSummary, '/account-summary/<int:req_id>/<string:group_name>/<string:tags>')
-    api.add_resource(IBrokerContract, '/contract')
-    api.add_resource(IBrokerContractSmartStockUS, '/contract/<int:req_id>/<string:symbol>')
+    logging.info("listening to http://127.0.0.1:8000")
 
-    app.run(debug=True)
+    run_simple('localhost', 8000, application)
 
 
 if __name__ == '__main__':

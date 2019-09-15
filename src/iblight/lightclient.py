@@ -363,7 +363,7 @@ class LightIBrokerClient(object):
                              req_id=req_id,
                              con_id=contract.con_id,
                              symbol=contract.symbol,
-                             security_type=contract.sec_type,
+                             sec_type=contract.sec_type,
                              last_trade_or_contact_month=contract.last_trade_date_or_contract_month,
                              strike=contract.strike,
                              right=contract.right,
@@ -377,19 +377,19 @@ class LightIBrokerClient(object):
 
         # Send combo legs for BAG requests (srv v8 and above)
         if contract.sec_type == "BAG":
-            comboLegsCount = len(contract.comboLegs) if contract.comboLegs else 0
-            fields['combo_legs_count'] = comboLegsCount
-            for comboLeg in contract.comboLegs:
-                fields['combo_leg_con_id'] = comboLeg.con_id
-                fields['combo_leg_ratio'] = comboLeg.ratio
-                fields['combo_leg_action'] = comboLeg.action
-                fields['combo_leg_exchange'] = comboLeg.exchange
+            combo_legs_count = len(contract.comboLegs) if contract.combo_legs else 0
+            fields['combo_legs_count'] = combo_legs_count
+            for combo_leg in contract.combo_legs:
+                fields['combo_leg_con_id'] = combo_leg.con_id
+                fields['combo_leg_ratio'] = combo_leg.ratio
+                fields['combo_leg_action'] = combo_leg.action
+                fields['combo_leg_exchange'] = combo_leg.exchange
 
-        if contract.deltaNeutralContract:
+        if contract.delta_neutral_contract:
             fields['delta_neutral_contract_flag'] = True
-            fields['delta_neutral_contract_con_id'] = contract.deltaNeutralContract.con_id
-            fields['delta_neutral_contract_delta'] = contract.deltaNeutralContract.delta
-            fields['delta_neutral_contract_price'] = contract.deltaNeutralContract.price
+            fields['delta_neutral_contract_con_id'] = contract.delta_neutral_contract.con_id
+            fields['delta_neutral_contract_delta'] = contract.delta_neutral_contract.delta
+            fields['delta_neutral_contract_price'] = contract.delta_neutral_contract.price
 
         else:
             fields['delta_neutral_contract_flag'] = False
@@ -1209,11 +1209,11 @@ class LightIBrokerClient(object):
 
         flds.append(make_field(order.notHeld))
 
-        if contract.deltaNeutralContract:
+        if contract.delta_neutral_contract:
             flds += [make_field(True),
-                     make_field(contract.deltaNeutralContract.con_id),
-                     make_field(contract.deltaNeutralContract.delta),
-                     make_field(contract.deltaNeutralContract.price)]
+                     make_field(contract.delta_neutral_contract.con_id),
+                     make_field(contract.delta_neutral_contract.delta),
+                     make_field(contract.delta_neutral_contract.price)]
         else:
             flds.append(make_field(False))
 
