@@ -1,0 +1,42 @@
+GET http://127.0.0.1:5000/mkt-data-type/4
+Accept: */*
+Cache-Control: no-cache
+
+###
+
+GET http://127.0.0.1:5000/mkt-data/1
+Accept: */*
+Cache-Control: no-cache
+
+
+###
+
+GET http://127.0.0.1:5000/positions
+Accept: */*
+Cache-Control: no-cache
+
+
+###
+
+GET http://127.0.0.1:5000/account-summary/1/All/NetLiquidation
+Accept: */*
+Cache-Control: no-cache
+
+###
+
+POST http://127.0.0.1:5000/contract
+Accept: */*
+Cache-Control: no-cache
+
+{
+    "req_id": 1,
+    "contract": {
+        "symbol": "MSFT",
+        "sec_type": "STK",
+        "currency": "USD",
+        "exchange": "SMART",
+        "primary_exchange": "ISLAND"
+    }
+}
+
+###

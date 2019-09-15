@@ -2,26 +2,24 @@
 Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
  and conditions of the IB API Non-Commercial License or the IB API Commercial License, as applicable.
 """
+import logging
+import queue
+import socket
 from collections import OrderedDict
 from enum import Enum
 from threading import Thread
 from typing import Tuple
 
-from iblight import lightcomm
-from iblight.lightconnection import LightConnection, NO_VALID_ID, NOT_CONNECTED, CONNECT_FAIL
-from iblight.lightcomm import make_field, make_field_handle_empty, UNSET_DOUBLE, UNSET_INTEGER
-from iblight.refibroker import Incoming, Outgoing
-
-import logging
-import queue
-import socket
-
 from ibapi.connection import MAX_MSG_LEN, BAD_LENGTH, UPDATE_TWS, BAD_MESSAGE
-from ibapi.contract import Contract
-from ibapi.order import Order
 from ibapi.execution import ExecutionFilter
+from ibapi.order import Order
 from ibapi.scanner import ScannerSubscription
 from ibapi.utils import current_fn_name, BadMessage
+from iblight import lightcomm
+from iblight.lightcomm import make_field, make_field_handle_empty, UNSET_DOUBLE, UNSET_INTEGER
+from iblight.lightconnection import LightConnection, NO_VALID_ID, NOT_CONNECTED, CONNECT_FAIL
+from iblight.model import Contract
+from iblight.refibroker import Incoming, Outgoing
 
 """
 The main class to use from API user's point of view.
@@ -34,21 +32,21 @@ The user just needs to override EWrapper methods to receive the answers.
 logger = logging.getLogger(__name__)
 
 TickerId = int
-OrderId  = int
+OrderId = int
 TagValueList = list
 FaDataType = int
 
-MIN_SERVER_VER_AUTO_PRICE_FOR_HEDGE     = 141
-MIN_SERVER_VER_WHAT_IF_EXT_FIELDS       = 142
-MIN_SERVER_VER_SCANNER_GENERIC_OPTS     = 143
-MIN_SERVER_VER_API_BIND_ORDER           = 144
-MIN_SERVER_VER_ORDER_CONTAINER          = 145
-MIN_SERVER_VER_SMART_DEPTH              = 146
-MIN_SERVER_VER_REMOVE_NULL_ALL_CASTING  = 147
-MIN_SERVER_VER_D_PEG_ORDERS             = 148
-MIN_SERVER_VER_MKT_DEPTH_PRIM_EXCHANGE  = 149
-MIN_SERVER_VER_COMPLETED_ORDERS         = 150
-MIN_SERVER_VER_PRICE_MGMT_ALGO          = 151
+MIN_SERVER_VER_AUTO_PRICE_FOR_HEDGE = 141
+MIN_SERVER_VER_WHAT_IF_EXT_FIELDS = 142
+MIN_SERVER_VER_SCANNER_GENERIC_OPTS = 143
+MIN_SERVER_VER_API_BIND_ORDER = 144
+MIN_SERVER_VER_ORDER_CONTAINER = 145
+MIN_SERVER_VER_SMART_DEPTH = 146
+MIN_SERVER_VER_REMOVE_NULL_ALL_CASTING = 147
+MIN_SERVER_VER_D_PEG_ORDERS = 148
+MIN_SERVER_VER_MKT_DEPTH_PRIM_EXCHANGE = 149
+MIN_SERVER_VER_COMPLETED_ORDERS = 150
+MIN_SERVER_VER_PRICE_MGMT_ALGO = 151
 
 # 100+ messaging */
 # 100 = enhanced handshake, msg length prefixes
@@ -72,7 +70,6 @@ class LightReader(Thread):
         self.msg_queue = msg_queue
 
     def run(self):
-        ##try:
         buf = b""
         while self.conn.is_connected():
             data = self.conn.recv_msg()
@@ -91,9 +88,6 @@ class LightReader(Thread):
                     break
 
         logger.debug("LightReader thread finished")
-
-        #except:
-        #    logger.exception('unhandled exception in LightReader thread')
 
 
 def process_socket_fields(fields: Tuple[bytes]) -> None:
@@ -124,9 +118,12 @@ class IBrokerClientEventHandler(object):
 
 class LightIBrokerClient(object):
 
-    #TODO: support redirect !!
+    # TODO: support redirect !!
 
-    def __init__(self):
+    def __init__(self, host: str, port: int, client_id: int):
+        self.host = host
+        self.port = port
+        self.client_id = client_id
         self.msg_queue = queue.Queue()
         self.event_handler = IBrokerClientEventHandler()
         self.reset()
@@ -135,10 +132,7 @@ class LightIBrokerClient(object):
         self.done = False
         self.nKeybIntHard = 0
         self._socket = None
-        self.host = None
-        self.port = None
         self.extraAuth = False
-        self.client_id = None
         self._server_version = None
         self.conn_time = None
         self.conn_state = None
@@ -167,7 +161,7 @@ class LightIBrokerClient(object):
 
         logger.info("REQUESTOLD %s %s" % (func_name, params))
 
-    def connect(self, host, port, clientId):
+    def connect(self):
         """This function must be called before any other. There is no
         feedback for a successful connection, but a subsequent attempt to
         connect will return the message \"Already connected.\"
@@ -182,19 +176,15 @@ class LightIBrokerClient(object):
 
             Note: Each client MUST connect with a unique clientId."""
 
-
         try:
-            self.host = host
-            self.port = port
-            self.client_id = clientId
-            logger.info("connecting to %s:%d w/ id:%d", self.host, self.port, self.client_id)
+            logger.info("connecting to {}:{} w/ id:{}".format(self.host, self.port, self.client_id))
 
             self._socket = LightConnection(self.host, self.port)
 
             self._socket.connect()
             self.set_conn_state(ConnectionState.CONNECTING)
 
-            #TODO: support async mode
+            # TODO: support async mode
 
             v100prefix = "API\0"
             v100version = "v%d..%d" % (MIN_CLIENT_VER, MAX_CLIENT_VER)
@@ -206,7 +196,7 @@ class LightIBrokerClient(object):
 
             fields = []
 
-            #sometimes I get news before the server version, thus the loop
+            # sometimes I get news before the server version, thus the loop
             while len(fields) != 2:
                 process_socket_fields(fields)
                 buf = self._socket.recv_msg()
@@ -229,11 +219,11 @@ class LightIBrokerClient(object):
             self.set_conn_state(ConnectionState.CONNECTED)
 
             self.reader = LightReader(self._socket, self.msg_queue)
-            self.reader.start()   # start thread
+            self.reader.start()  # start thread
             logger.info("sent start api")
             self.start_api()
             self.event_handler.connect_ack()
-            
+
         except socket.error:
             self.event_handler.error(NO_VALID_ID, CONNECT_FAIL.code(), CONNECT_FAIL.msg())
             logger.info("could not connect")
@@ -260,7 +250,7 @@ class LightIBrokerClient(object):
         return ConnectionState.CONNECTED == self.conn_state and connConnected
 
     def keyboard_interrupt(self):
-        #intended to be overloaded
+        # intended to be overloaded
         pass
 
     def keyboard_interrupt_hard(self):
@@ -273,12 +263,13 @@ class LightIBrokerClient(object):
 
         try:
             while not self.done and (self.is_connected()
-                        or not self.msg_queue.empty()):
+                                     or not self.msg_queue.empty()):
                 try:
                     try:
                         text = self.msg_queue.get(block=True, timeout=0.2)
                         if len(text) > MAX_MSG_LEN:
-                            self.event_handler.error(NO_VALID_ID, BAD_LENGTH.code(), "%s:%d:%s" % (BAD_LENGTH.msg(), len(text), text))
+                            self.event_handler.error(NO_VALID_ID, BAD_LENGTH.code(),
+                                                     "%s:%d:%s" % (BAD_LENGTH.msg(), len(text), text))
                             self.disconnect()
                             break
                     except queue.Empty:
@@ -327,7 +318,8 @@ class LightIBrokerClient(object):
     def start_api(self):
         """  Initiates the message exchange between the client application and
         the TWS/IB Gateway. """
-        self.request_ibroker(Outgoing.START_API, OrderedDict(version=2, client_id=self.client_id, opt_capab=self.opt_capab))
+        self.request_ibroker(Outgoing.START_API,
+                             OrderedDict(version=2, client_id=self.client_id, opt_capab=self.opt_capab))
 
     def req_market_data_type(self, market_data_type: int):
         """The API can receive frozen market data from Trader
@@ -342,7 +334,8 @@ class LightIBrokerClient(object):
             frozen market data"""
         self.request_ibroker(Outgoing.REQ_MARKET_DATA_TYPE, OrderedDict(version=1, market_data_type=market_data_type))
 
-    def req_market_data(self, req_id: TickerId, contract: Contract, generic_tick_list: str, snapshot: bool, regulatory_snapshot: bool):
+    def req_market_data(self, req_id: TickerId, contract: Contract, generic_tick_list: str, snapshot: bool,
+                        regulatory_snapshot: bool):
         """Call this function to request market data. The market data
         will be returned by the tickPrice and tickSize events.
 
@@ -366,33 +359,33 @@ class LightIBrokerClient(object):
 
         fields = OrderedDict(version=11,
                              req_id=req_id,
-                             con_id=contract.conId,
+                             con_id=contract.con_id,
                              symbol=contract.symbol,
-                             security_type=contract.secType,
-                             last_trade_or_contact_month=contract.lastTradeDateOrContractMonth,
+                             security_type=contract.sec_type,
+                             last_trade_or_contact_month=contract.last_trade_date_or_contract_month,
                              strike=contract.strike,
                              right=contract.right,
                              multiplier=contract.multiplier,
                              exchange=contract.exchange,
-                             primary_exchange=contract.primaryExchange,
+                             primary_exchange=contract.primary_exchange,
                              currency=contract.currency,
-                             local_symbol=contract.localSymbol,
-                             trading_class=contract.tradingClass,
+                             local_symbol=contract.local_symbol,
+                             trading_class=contract.trading_class,
                              )
 
         # Send combo legs for BAG requests (srv v8 and above)
-        if contract.secType == "BAG":
+        if contract.sec_type == "BAG":
             comboLegsCount = len(contract.comboLegs) if contract.comboLegs else 0
             fields['combo_legs_count'] = comboLegsCount
             for comboLeg in contract.comboLegs:
-                fields['combo_leg_con_id'] = comboLeg.conId
+                fields['combo_leg_con_id'] = comboLeg.con_id
                 fields['combo_leg_ratio'] = comboLeg.ratio
                 fields['combo_leg_action'] = comboLeg.action
                 fields['combo_leg_exchange'] = comboLeg.exchange
 
         if contract.deltaNeutralContract:
             fields['delta_neutral_contract_flag'] = True
-            fields['delta_neutral_contract_con_id'] = contract.deltaNeutralContract.conId
+            fields['delta_neutral_contract_con_id'] = contract.deltaNeutralContract.con_id
             fields['delta_neutral_contract_delta'] = contract.deltaNeutralContract.delta
             fields['delta_neutral_contract_price'] = contract.deltaNeutralContract.price
 
@@ -425,21 +418,22 @@ class LightIBrokerClient(object):
     def req_market_rule(self, market_rule_id: int):
         self.request_ibroker(Outgoing.REQ_MARKET_RULE, OrderedDict(market_rule_id=market_rule_id))
 
-    def req_tick_by_tick_data(self, req_id: int, contract: Contract, tick_type: str, ticks_count: int, ignore_size: bool):
+    def req_tick_by_tick_data(self, req_id: int, contract: Contract, tick_type: str, ticks_count: int,
+                              ignore_size: bool):
         self.request_ibroker(Outgoing.REQ_TICK_BY_TICK_DATA,
                              OrderedDict(req_id=req_id,
-                                         con_id=contract.conId,
+                                         con_id=contract.con_id,
                                          symbol=contract.symbol,
-                                         sec_type=contract.secType,
-                                         last_trade_date_or_contract_month=contract.lastTradeDateOrContractMonth,
+                                         sec_type=contract.sec_type,
+                                         last_trade_date_or_contract_month=contract.last_trade_date_or_contract_month,
                                          strike=contract.strike,
                                          right=contract.right,
                                          multiplier=contract.multiplier,
                                          exchange=contract.exchange,
-                                         primary_exchange=contract.primaryExchange,
+                                         primary_exchange=contract.primary_exchange,
                                          currency=contract.currency,
-                                         local_symbol=contract.localSymbol,
-                                         trading_class=contract.tradingClass,
+                                         local_symbol=contract.local_symbol,
+                                         trading_class=contract.trading_class,
                                          tick_type=tick_type,
                                          ticks_count=ticks_count,
                                          ignore_size=ignore_size
@@ -462,21 +456,21 @@ class LightIBrokerClient(object):
         self.request_ibroker(Outgoing.REQ_CONTRACT_DATA,
                              OrderedDict(version=8,
                                          req_id=req_id,
-                                         con_id=contract.conId,
+                                         con_id=contract.con_id,
                                          symbol=contract.symbol,
-                                         sec_type=contract.secType,
-                                         last_trade_date_or_contract_month=contract.lastTradeDateOrContractMonth,
+                                         sec_type=contract.sec_type,
+                                         last_trade_date_or_contract_month=contract.last_trade_date_or_contract_month,
                                          strike=contract.strike,
                                          right=contract.right,
                                          multiplier=contract.multiplier,
                                          exchange=contract.exchange,
-                                         primary_exchange=contract.primaryExchange,
+                                         primary_exchange=contract.primary_exchange,
                                          currency=contract.currency,
-                                         local_symbol=contract.localSymbol,
-                                         trading_class=contract.tradingClass,
-                                         include_expired=contract.includeExpired,
-                                         sec_id_type=contract.secIdType,
-                                         sec_id=contract.secId
+                                         local_symbol=contract.local_symbol,
+                                         trading_class=contract.trading_class,
+                                         include_expired=contract.include_expired,
+                                         sec_id_type=contract.sec_id_type,
+                                         sec_id=contract.sec_id
                                          )
                              )
 
@@ -490,7 +484,8 @@ class LightIBrokerClient(object):
             receiving this information.
         acctCode:str -The account code for which to receive account and
             portfolio updates."""
-        self.request_ibroker(Outgoing.REQ_ACCT_DATA, OrderedDict(version=2, subscribe=subscribe, account_code=account_code))
+        self.request_ibroker(Outgoing.REQ_ACCT_DATA,
+                             OrderedDict(version=2, subscribe=subscribe, account_code=account_code))
 
     def req_account_summary(self, req_id: int, group_name: str, tags: str):
         """Call this method to request and keep up to date the data that appears
@@ -546,7 +541,8 @@ class LightIBrokerClient(object):
                 the specified currency.
             $LEDGER:ALL - Single flag to relay all cash balance tags* in all
             currencies."""
-        self.request_ibroker(Outgoing.REQ_ACCOUNT_SUMMARY, OrderedDict(version=1, req_id=req_id, group_name=group_name, tags=tags))
+        self.request_ibroker(Outgoing.REQ_ACCOUNT_SUMMARY,
+                             OrderedDict(version=1, req_id=req_id, group_name=group_name, tags=tags))
 
     def cancel_account_summary(self, req_id: int):
         """Cancels the request for Account Window Summary tab data.
@@ -566,21 +562,24 @@ class LightIBrokerClient(object):
         """Requests positions for account and/or model.
         Results are delivered via EWrapper.positionMulti() and
         EWrapper.positionMultiEnd() """
-        self.request_ibroker(Outgoing.REQ_POSITIONS_MULTI, OrderedDict(version=1, req_id=req_id, account=account, model_code=model_code))
+        self.request_ibroker(Outgoing.REQ_POSITIONS_MULTI,
+                             OrderedDict(version=1, req_id=req_id, account=account, model_code=model_code))
 
     def cancel_positions_multi(self, req_id: int):
         self.request_ibroker(Outgoing.CANCEL_POSITIONS_MULTI, OrderedDict(version=1, req_id=req_id))
 
-    def req_account_updates_multi(self, req_id: int, account: str, model_code: str, ledger_and_NLV: bool):
+    def req_account_updates_multi(self, req_id: int, account: str, model_code: str, ledger_and_nlv: bool):
         """Requests account updates for account and/or model."""
-        self.request_ibroker(Outgoing.REQ_ACCOUNT_UPDATES_MULTI, OrderedDict(version=1, req_id=req_id, account=account, model_code=model_code, ledger_and_NLV=ledger_and_NLV))
+        self.request_ibroker(Outgoing.REQ_ACCOUNT_UPDATES_MULTI,
+                             OrderedDict(version=1, req_id=req_id, account=account, model_code=model_code,
+                                         ledger_and_nlv=ledger_and_nlv))
 
     def cancel_account_updates_multi(self, req_id: int):
         self.request_ibroker(Outgoing.CANCEL_ACCOUNT_UPDATES_MULTI, OrderedDict(version=1, req_id=req_id))
 
-    def req_historical_data(self, req_id: TickerId , contract: Contract, end_date_time: str,
-                          duration_str: str, bar_size_setting: str, what_to_show: str,
-                          use_RTH: int, format_date: int, keep_up_to_date: bool, chart_options: TagValueList):
+    def req_historical_data(self, req_id: TickerId, contract: Contract, end_date_time: str,
+                            duration_str: str, bar_size_setting: str, what_to_show: str,
+                            use_rth: int, format_date: int, keep_up_to_date: bool, chart_options: TagValueList):
         """Requests contracts' historical data. When requesting historical data, a
         finishing time and date is required along with a duration string. The
         resulting bars will be returned in EWrapper.historicalData()
@@ -636,31 +635,31 @@ class LightIBrokerClient(object):
         chartOptions:TagValueList - For internal use only. Use default value XYZ. """
 
         fields = OrderedDict(req_id=req_id,
-                    con_id=contract.conId,
-                    symbol=contract.symbol,
-                    sec_type=contract.secType,
-                    last_trade_date_or_contract_month=contract.lastTradeDateOrContractMonth,
-                    strike=contract.strike,
-                    right=contract.right,
-                    multiplier=contract.multiplier,
-                    exchange=contract.exchange,
-                    primary_exchange=contract.primaryExchange,
-                    currency=contract.currency,
-                    local_symbol=contract.localSymbol,
-                    trading_class=contract.tradingClass,
-                    include_expired=contract.includeExpired,
-                    end_date_time=end_date_time,
-                    bar_size_setting=bar_size_setting,
-                    duration_str=duration_str,
-                    use_RTH=use_RTH,
-                    what_to_show=what_to_show,
-                    format_date=format_date
-                    )
+                             con_id=contract.con_id,
+                             symbol=contract.symbol,
+                             sec_type=contract.sec_type,
+                             last_trade_date_or_contract_month=contract.last_trade_date_or_contract_month,
+                             strike=contract.strike,
+                             right=contract.right,
+                             multiplier=contract.multiplier,
+                             exchange=contract.exchange,
+                             primary_exchange=contract.primary_exchange,
+                             currency=contract.currency,
+                             local_symbol=contract.local_symbol,
+                             trading_class=contract.trading_class,
+                             include_expired=contract.include_expired,
+                             end_date_time=end_date_time,
+                             bar_size_setting=bar_size_setting,
+                             duration_str=duration_str,
+                             use_rth=use_rth,
+                             what_to_show=what_to_show,
+                             format_date=format_date
+                             )
         # Send combo legs for BAG requests
-        if contract.secType == "BAG":
+        if contract.sec_type == "BAG":
             fields['combo_legs'] = len(contract.comboLegs)
             for comboLeg in contract.comboLegs:
-                fields['combo_leg_con_id'] = comboLeg.conId
+                fields['combo_leg_con_id'] = comboLeg.con_id
                 fields['combo_leg_ratio'] = comboLeg.ratio
                 fields['combo_leg_action'] = comboLeg.action
                 fields['combo_leg_exchange'] = comboLeg.exchange
@@ -686,47 +685,48 @@ class LightIBrokerClient(object):
 
     # Note that formatData parameter affects intraday bars only
     # 1-day bars always return with date in YYYYMMDD format
-    def req_head_timestamp(self, req_id: TickerId, contract: Contract, what_to_show: str, use_RTH: int, format_date: int):
+    def req_head_timestamp(self, req_id: TickerId, contract: Contract, what_to_show: str, use_rth: int,
+                           format_date: int):
         fields = OrderedDict(req_id=req_id,
-                    con_id=contract.conId,
-                    symbol=contract.symbol,
-                    sec_type=contract.secType,
-                    last_trade_date_or_contract_month=contract.lastTradeDateOrContractMonth,
-                    strike=contract.strike,
-                    right=contract.right,
-                    multiplier=contract.multiplier,
-                    exchange=contract.exchange,
-                    primary_exchange=contract.primaryExchange,
-                    currency=contract.currency,
-                    local_symbol=contract.localSymbol,
-                    trading_class=contract.tradingClass,
-                    include_expired=contract.includeExpired,
-                    use_RTH=use_RTH,
-                    what_to_show=what_to_show,
-                    format_date=format_date
-                    )
+                             con_id=contract.con_id,
+                             symbol=contract.symbol,
+                             sec_type=contract.sec_type,
+                             last_trade_date_or_contract_month=contract.last_trade_date_or_contract_month,
+                             strike=contract.strike,
+                             right=contract.right,
+                             multiplier=contract.multiplier,
+                             exchange=contract.exchange,
+                             primary_exchange=contract.primary_exchange,
+                             currency=contract.currency,
+                             local_symbol=contract.local_symbol,
+                             trading_class=contract.trading_class,
+                             include_expired=contract.include_expired,
+                             use_rth=use_rth,
+                             what_to_show=what_to_show,
+                             format_date=format_date
+                             )
         self.request_ibroker(Outgoing.REQ_HEAD_TIMESTAMP, fields)
 
     def cancel_head_timestamp(self, req_id: TickerId):
         self.request_ibroker(Outgoing.CANCEL_HEAD_TIMESTAMP, OrderedDict(req_id=req_id))
 
-    def req_histogram_data(self, ticker_id: int, contract: Contract, use_RTH: bool, time_period: str):
+    def req_histogram_data(self, ticker_id: int, contract: Contract, use_rth: bool, time_period: str):
         self.request_ibroker(Outgoing.REQ_HISTOGRAM_DATA,
                              OrderedDict(ticker_id=ticker_id,
-                                            con_id=contract.conId,
-                                            symbol=contract.symbol,
-                                            sec_type=contract.secType,
-                                            last_trade_date_or_contract_month=contract.lastTradeDateOrContractMonth,
-                                            strike=contract.strike,
-                                            right=contract.right,
-                                            multiplier=contract.multiplier,
-                                            exchange=contract.exchange,
-                                            primary_exchange=contract.primaryExchange,
-                                            currency=contract.currency,
-                                            local_symbol=contract.localSymbol,
-                                            trading_class=contract.tradingClass,
-                                            include_expired=contract.includeExpired,
-                                            use_RTH=use_RTH,
+                                         con_id=contract.con_id,
+                                         symbol=contract.symbol,
+                                         sec_type=contract.sec_type,
+                                         last_trade_date_or_contract_month=contract.last_trade_date_or_contract_month,
+                                         strike=contract.strike,
+                                         right=contract.right,
+                                         multiplier=contract.multiplier,
+                                         exchange=contract.exchange,
+                                         primary_exchange=contract.primary_exchange,
+                                         currency=contract.currency,
+                                         local_symbol=contract.local_symbol,
+                                         trading_class=contract.trading_class,
+                                         include_expired=contract.include_expired,
+                                         use_rth=use_rth,
                                          time_period=time_period,
                                          )
                              )
@@ -735,30 +735,30 @@ class LightIBrokerClient(object):
         self.request_ibroker(Outgoing.CANCEL_HISTOGRAM_DATA, OrderedDict(ticker_id=ticker_id))
 
     def req_historical_ticks(self, req_id: int, contract: Contract, start_date_time: str,
-                           end_date_time: str, number_of_ticks: int, what_to_show: str, use_RTH: int,
-                           ignore_size: bool, misc_options: TagValueList):
+                             end_date_time: str, number_of_ticks: int, what_to_show: str, use_rth: int,
+                             ignore_size: bool, misc_options: TagValueList):
 
         fields = OrderedDict(req_id=req_id,
-                            con_id=contract.conId,
-                            symbol=contract.symbol,
-                            sec_type=contract.secType,
-                            last_trade_date_or_contract_month=contract.lastTradeDateOrContractMonth,
-                            strike=contract.strike,
-                            right=contract.right,
-                            multiplier=contract.multiplier,
-                            exchange=contract.exchange,
-                            primary_exchange=contract.primaryExchange,
-                            currency=contract.currency,
-                            local_symbol=contract.localSymbol,
-                            trading_class=contract.tradingClass,
-                            include_expired=contract.includeExpired,
+                             con_id=contract.con_id,
+                             symbol=contract.symbol,
+                             sec_type=contract.sec_type,
+                             last_trade_date_or_contract_month=contract.last_trade_date_or_contract_month,
+                             strike=contract.strike,
+                             right=contract.right,
+                             multiplier=contract.multiplier,
+                             exchange=contract.exchange,
+                             primary_exchange=contract.primary_exchange,
+                             currency=contract.currency,
+                             local_symbol=contract.local_symbol,
+                             trading_class=contract.trading_class,
+                             include_expired=contract.include_expired,
                              start_date_time=start_date_time,
                              end_date_time=end_date_time,
                              number_of_ticks=number_of_ticks,
                              what_to_show=what_to_show,
-                             use_RTH=use_RTH,
+                             use_rth=use_rth,
                              ignore_size=ignore_size
-                         )
+                             )
 
         misc_options_string = ""
         if misc_options:
@@ -770,6 +770,10 @@ class LightIBrokerClient(object):
 
     ##########################################################################
     ##########################################################################
+    ##########################################################################
+    ##########################################################################
+    ##########################################################################
+    ##########################################################################
 
     def reqSmartComponents(self, reqId: int, bboExchange: str):
         self.handle_request(current_fn_name(), vars())
@@ -779,19 +783,18 @@ class LightIBrokerClient(object):
             return
 
         msg = make_field(Outgoing.REQ_SMART_COMPONENTS) \
-            + make_field(reqId) \
-            + make_field(bboExchange)
+              + make_field(reqId) \
+              + make_field(bboExchange)
 
         self.send_msg(msg)
-
 
     ##########################################################################
     ################## Options
     ##########################################################################
 
-    def calculateImpliedVolatility(self, reqId:TickerId, contract:Contract,
-                                   optionPrice:float, underPrice:float,
-                                   implVolOptions:TagValueList):
+    def calculateImpliedVolatility(self, reqId: TickerId, contract: Contract,
+                                   optionPrice: float, underPrice: float,
+                                   implVolOptions: TagValueList):
         """Call this function to calculate volatility for a supplied
         option price and underlying price. Result will be delivered
         via EWrapper.tickOptionComputation()
@@ -812,23 +815,23 @@ class LightIBrokerClient(object):
         # send req mkt data msg
         flds = []
         flds += [make_field(Outgoing.REQ_CALC_IMPLIED_VOLAT),
-            make_field(VERSION),
-            make_field(reqId),
-            # send contract fields
-            make_field(contract.conId),
-            make_field(contract.symbol),
-            make_field(contract.secType),
-            make_field(contract.lastTradeDateOrContractMonth),
-            make_field(contract.strike),
-            make_field(contract.right),
-            make_field(contract.multiplier),
-            make_field(contract.exchange),
-            make_field(contract.primaryExchange),
-            make_field(contract.currency),
-            make_field(contract.localSymbol)]
+                 make_field(VERSION),
+                 make_field(reqId),
+                 # send contract fields
+                 make_field(contract.con_id),
+                 make_field(contract.symbol),
+                 make_field(contract.sec_type),
+                 make_field(contract.last_trade_date_or_contract_month),
+                 make_field(contract.strike),
+                 make_field(contract.right),
+                 make_field(contract.multiplier),
+                 make_field(contract.exchange),
+                 make_field(contract.primary_exchange),
+                 make_field(contract.currency),
+                 make_field(contract.local_symbol)]
 
-        flds += [make_field(contract.tradingClass),]
-        flds += [ make_field( optionPrice), make_field( underPrice)]
+        flds += [make_field(contract.trading_class), ]
+        flds += [make_field(optionPrice), make_field(underPrice)]
 
         implVolOptStr = ""
         tagValuesCount = len(implVolOptions) if implVolOptions else 0
@@ -836,12 +839,12 @@ class LightIBrokerClient(object):
             for implVolOpt in implVolOptions:
                 implVolOptStr += str(implVolOpt)
         flds += [make_field(tagValuesCount),
-            make_field(implVolOptStr)]
+                 make_field(implVolOptStr)]
 
         msg = "".join(flds)
         self.send_msg(msg)
 
-    def cancelCalculateImpliedVolatility(self, reqId:TickerId):
+    def cancelCalculateImpliedVolatility(self, reqId: TickerId):
         """Call this function to cancel a request to calculate
         volatility for a supplied option price and underlying price.
 
@@ -856,14 +859,14 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.CANCEL_CALC_IMPLIED_VOLAT) \
-            + make_field(VERSION) \
-            + make_field(reqId)
+              + make_field(VERSION) \
+              + make_field(reqId)
 
         self.send_msg(msg)
 
-    def calculateOptionPrice(self, reqId:TickerId, contract:Contract,
-                             volatility:float, underPrice:float,
-                             optPrcOptions:TagValueList):
+    def calculateOptionPrice(self, reqId: TickerId, contract: Contract,
+                             volatility: float, underPrice: float,
+                             optPrcOptions: TagValueList):
         """Call this function to calculate option price and greek values
         for a supplied volatility and underlying price.
 
@@ -883,24 +886,24 @@ class LightIBrokerClient(object):
         # send req mkt data msg
         flds = []
         flds += [make_field(Outgoing.REQ_CALC_OPTION_PRICE),
-            make_field(VERSION),
-            make_field(reqId),
-            # send contract fields
-            make_field(contract.conId),
-            make_field(contract.symbol),
-            make_field(contract.secType),
-            make_field(contract.lastTradeDateOrContractMonth),
-            make_field(contract.strike),
-            make_field(contract.right),
-            make_field(contract.multiplier),
-            make_field(contract.exchange),
-            make_field(contract.primaryExchange),
-            make_field(contract.currency),
-            make_field(contract.localSymbol)]
+                 make_field(VERSION),
+                 make_field(reqId),
+                 # send contract fields
+                 make_field(contract.con_id),
+                 make_field(contract.symbol),
+                 make_field(contract.sec_type),
+                 make_field(contract.last_trade_date_or_contract_month),
+                 make_field(contract.strike),
+                 make_field(contract.right),
+                 make_field(contract.multiplier),
+                 make_field(contract.exchange),
+                 make_field(contract.primary_exchange),
+                 make_field(contract.currency),
+                 make_field(contract.local_symbol)]
 
-        flds += [make_field(contract.tradingClass),]
-        flds += [ make_field(volatility),
-            make_field(underPrice)]
+        flds += [make_field(contract.trading_class), ]
+        flds += [make_field(volatility),
+                 make_field(underPrice)]
 
         optPrcOptStr = ""
         tagValuesCount = len(optPrcOptions) if optPrcOptions else 0
@@ -908,12 +911,12 @@ class LightIBrokerClient(object):
             for implVolOpt in optPrcOptions:
                 optPrcOptStr += str(implVolOpt)
         flds += [make_field(tagValuesCount),
-            make_field(optPrcOptStr)]
+                 make_field(optPrcOptStr)]
 
         msg = "".join(flds)
         self.send_msg(msg)
 
-    def cancelCalculateOptionPrice(self, reqId:TickerId):
+    def cancelCalculateOptionPrice(self, reqId: TickerId):
         """Call this function to cancel a request to calculate the option
         price and greek values for a supplied volatility and underlying price.
 
@@ -928,15 +931,14 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.CANCEL_CALC_OPTION_PRICE) \
-            + make_field(VERSION) \
-            + make_field(reqId)
+              + make_field(VERSION) \
+              + make_field(reqId)
 
         self.send_msg(msg)
 
-
-    def exerciseOptions(self, reqId:TickerId, contract:Contract,
-                        exerciseAction:int, exerciseQuantity:int,
-                        account:str, override:int):
+    def exerciseOptions(self, reqId: TickerId, contract: Contract,
+                        exerciseAction: int, exerciseQuantity: int,
+                        account: str, override: int):
         """reqId:TickerId - The ticker id. multipleust be a unique value.
         contract:Contract - This structure contains a description of the
             contract to be exercised
@@ -958,40 +960,38 @@ class LightIBrokerClient(object):
             self.event_handler.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
-
         VERSION = 2
 
         # send req mkt data msg
         flds = []
         flds += [make_field(Outgoing.EXERCISE_OPTIONS),
-            make_field(VERSION),
-            make_field(reqId)]
+                 make_field(VERSION),
+                 make_field(reqId)]
         # send contract fields
-        flds += [make_field(contract.conId),]
+        flds += [make_field(contract.con_id), ]
         flds += [make_field(contract.symbol),
-            make_field(contract.secType),
-            make_field(contract.lastTradeDateOrContractMonth),
-            make_field(contract.strike),
-            make_field(contract.right),
-            make_field(contract.multiplier),
-            make_field(contract.exchange),
-            make_field(contract.currency),
-            make_field(contract.localSymbol)]
-        flds += [make_field(contract.tradingClass),]
+                 make_field(contract.sec_type),
+                 make_field(contract.last_trade_date_or_contract_month),
+                 make_field(contract.strike),
+                 make_field(contract.right),
+                 make_field(contract.multiplier),
+                 make_field(contract.exchange),
+                 make_field(contract.currency),
+                 make_field(contract.local_symbol)]
+        flds += [make_field(contract.trading_class), ]
         flds += [make_field(exerciseAction),
-            make_field(exerciseQuantity),
-            make_field(account),
-            make_field(override)]
+                 make_field(exerciseQuantity),
+                 make_field(account),
+                 make_field(override)]
 
         msg = "".join(flds)
         self.send_msg(msg)
-
 
     #########################################################################
     ################## Orders
     ########################################################################
 
-    def placeOrder(self, orderId:OrderId , contract:Contract, order:Order):
+    def placeOrder(self, orderId: OrderId, contract: Contract, order: Order):
         """Call this function to place an order. The order status will
         be returned by the orderStatus event.
 
@@ -1021,79 +1021,79 @@ class LightIBrokerClient(object):
         flds += [make_field(orderId)]
 
         # send contract fields
-        flds.append(make_field( contract.conId))
-        flds += [make_field( contract.symbol),
-            make_field( contract.secType),
-            make_field( contract.lastTradeDateOrContractMonth),
-            make_field( contract.strike),
-            make_field( contract.right),
-            make_field( contract.multiplier), # srv v15 and above
-            make_field( contract.exchange),
-            make_field( contract.primaryExchange), # srv v14 and above
-            make_field( contract.currency),
-            make_field( contract.localSymbol)] # srv v2 and above
-        flds.append(make_field( contract.tradingClass))
+        flds.append(make_field(contract.con_id))
+        flds += [make_field(contract.symbol),
+                 make_field(contract.sec_type),
+                 make_field(contract.last_trade_date_or_contract_month),
+                 make_field(contract.strike),
+                 make_field(contract.right),
+                 make_field(contract.multiplier),  # srv v15 and above
+                 make_field(contract.exchange),
+                 make_field(contract.primary_exchange),  # srv v14 and above
+                 make_field(contract.currency),
+                 make_field(contract.local_symbol)]  # srv v2 and above
+        flds.append(make_field(contract.trading_class))
 
-        flds += [make_field( contract.secIdType),
-                make_field( contract.secId)]
+        flds += [make_field(contract.sec_id_type),
+                 make_field(contract.sec_id)]
 
         # send main order fields
-        flds.append(make_field( order.action))
+        flds.append(make_field(order.action))
 
         flds.append(make_field(order.totalQuantity))
 
-        flds.append(make_field_handle_empty( order.lmtPrice))
-        flds.append(make_field_handle_empty( order.auxPrice))
+        flds.append(make_field_handle_empty(order.lmtPrice))
+        flds.append(make_field_handle_empty(order.auxPrice))
 
         # send extended order fields
-        flds += [make_field( order.tif),
-        make_field( order.ocaGroup),
-        make_field( order.account),
-        make_field( order.openClose),
-        make_field( order.origin),
-        make_field( order.orderRef),
-        make_field( order.transmit),
-        make_field( order.parentId),      # srv v4 and above
-        make_field( order.blockOrder),    # srv v5 and above
-        make_field( order.sweepToFill),   # srv v5 and above
-        make_field( order.displaySize),   # srv v5 and above
-        make_field( order.triggerMethod), # srv v5 and above
-        make_field( order.outsideRth),    # srv v5 and above
-        make_field( order.hidden)]        # srv v7 and above
+        flds += [make_field(order.tif),
+                 make_field(order.ocaGroup),
+                 make_field(order.account),
+                 make_field(order.openClose),
+                 make_field(order.origin),
+                 make_field(order.orderRef),
+                 make_field(order.transmit),
+                 make_field(order.parentId),  # srv v4 and above
+                 make_field(order.blockOrder),  # srv v5 and above
+                 make_field(order.sweepToFill),  # srv v5 and above
+                 make_field(order.displaySize),  # srv v5 and above
+                 make_field(order.triggerMethod),  # srv v5 and above
+                 make_field(order.outsideRth),  # srv v5 and above
+                 make_field(order.hidden)]  # srv v7 and above
 
         # Send combo legs for BAG requests (srv v8 and above)
-        if contract.secType == "BAG":
+        if contract.sec_type == "BAG":
             comboLegsCount = len(contract.comboLegs) if contract.comboLegs else 0
             flds.append(make_field(comboLegsCount))
             if comboLegsCount > 0:
                 for comboLeg in contract.comboLegs:
                     assert comboLeg
-                    flds += [make_field(comboLeg.conId),
-                        make_field( comboLeg.ratio),
-                        make_field( comboLeg.action),
-                        make_field( comboLeg.exchange),
-                        make_field( comboLeg.openClose),
-                        make_field( comboLeg.shortSaleSlot),      #srv v35 and above
-                        make_field( comboLeg.designatedLocation)] # srv v35 and above
+                    flds += [make_field(comboLeg.con_id),
+                             make_field(comboLeg.ratio),
+                             make_field(comboLeg.action),
+                             make_field(comboLeg.exchange),
+                             make_field(comboLeg.openClose),
+                             make_field(comboLeg.shortSaleSlot),  # srv v35 and above
+                             make_field(comboLeg.designatedLocation)]  # srv v35 and above
 
                     flds.append(make_field(comboLeg.exemptCode))
 
         # Send order combo legs for BAG requests
-        if contract.secType == "BAG":
+        if contract.sec_type == "BAG":
             orderComboLegsCount = len(order.orderComboLegs) if order.orderComboLegs else 0
-            flds.append(make_field( orderComboLegsCount))
+            flds.append(make_field(orderComboLegsCount))
             if orderComboLegsCount:
                 for orderComboLeg in order.orderComboLegs:
                     assert orderComboLeg
-                    flds.append(make_field_handle_empty( orderComboLeg.price))
+                    flds.append(make_field_handle_empty(orderComboLeg.price))
 
-        if contract.secType == "BAG":
-                smartComboRoutingParamsCount = len(order.smartComboRoutingParams) if order.smartComboRoutingParams else 0
-                flds.append(make_field( smartComboRoutingParamsCount))
-                if smartComboRoutingParamsCount > 0:
-                    for tagValue in order.smartComboRoutingParams:
-                        flds += [make_field(tagValue.tag),
-                            make_field(tagValue.value)]
+        if contract.sec_type == "BAG":
+            smartComboRoutingParamsCount = len(order.smartComboRoutingParams) if order.smartComboRoutingParams else 0
+            flds.append(make_field(smartComboRoutingParamsCount))
+            if smartComboRoutingParamsCount > 0:
+                for tagValue in order.smartComboRoutingParams:
+                    flds += [make_field(tagValue.tag),
+                             make_field(tagValue.value)]
 
         ######################################################################
         # Send the shares allocation.
@@ -1108,145 +1108,144 @@ class LightIBrokerClient(object):
         #          U101/20,U203/80
         #####################################################################
         # send deprecated sharesAllocation field
-        flds += [make_field( ""),            # srv v9 and above
+        flds += [make_field(""),  # srv v9 and above
 
-            make_field( order.discretionaryAmt), # srv v10 and above
-            make_field( order.goodAfterTime), # srv v11 and above
-            make_field( order.goodTillDate), # srv v12 and above
+                 make_field(order.discretionaryAmt),  # srv v10 and above
+                 make_field(order.goodAfterTime),  # srv v11 and above
+                 make_field(order.goodTillDate),  # srv v12 and above
 
-            make_field( order.faGroup),      # srv v13 and above
-            make_field( order.faMethod),     # srv v13 and above
-            make_field( order.faPercentage), # srv v13 and above
-            make_field( order.faProfile)]    # srv v13 and above
+                 make_field(order.faGroup),  # srv v13 and above
+                 make_field(order.faMethod),  # srv v13 and above
+                 make_field(order.faPercentage),  # srv v13 and above
+                 make_field(order.faProfile)]  # srv v13 and above
 
-        flds.append(make_field( order.modelCode))
+        flds.append(make_field(order.modelCode))
 
         # institutional short saleslot data (srv v18 and above)
-        flds += [make_field( order.shortSaleSlot),   # 0 for retail, 1 or 2 for institutions
-            make_field( order.designatedLocation)]   # populate only when shortSaleSlot = 2.
-        flds.append(make_field( order.exemptCode))
+        flds += [make_field(order.shortSaleSlot),  # 0 for retail, 1 or 2 for institutions
+                 make_field(order.designatedLocation)]  # populate only when shortSaleSlot = 2.
+        flds.append(make_field(order.exemptCode))
 
         # not needed anymore
-        #bool isVolOrder = (order.orderType.CompareNoCase("VOL") == 0)
+        # bool isVolOrder = (order.orderType.CompareNoCase("VOL") == 0)
 
         # srv v19 and above fields
-        flds.append(make_field( order.ocaType))
-        #if( self.serverVersion() < 38) {
+        flds.append(make_field(order.ocaType))
+        # if( self.serverVersion() < 38) {
         # will never happen
         #      send( /* order.rthOnly */ false);
-        #}
-        flds += [make_field( order.rule80A),
-            make_field( order.settlingFirm),
-            make_field( order.allOrNone),
-            make_field_handle_empty( order.minQty),
-            make_field_handle_empty( order.percentOffset),
-            make_field( order.eTradeOnly),
-            make_field( order.firmQuoteOnly),
-            make_field_handle_empty( order.nbboPriceCap),
-            make_field( order.auctionStrategy), # AUCTION_MATCH, AUCTION_IMPROVEMENT, AUCTION_TRANSPARENT
-            make_field_handle_empty( order.startingPrice),
-            make_field_handle_empty( order.stockRefPrice),
-            make_field_handle_empty( order.delta),
-            make_field_handle_empty( order.stockRangeLower),
-            make_field_handle_empty( order.stockRangeUpper),
+        # }
+        flds += [make_field(order.rule80A),
+                 make_field(order.settlingFirm),
+                 make_field(order.allOrNone),
+                 make_field_handle_empty(order.minQty),
+                 make_field_handle_empty(order.percentOffset),
+                 make_field(order.eTradeOnly),
+                 make_field(order.firmQuoteOnly),
+                 make_field_handle_empty(order.nbboPriceCap),
+                 make_field(order.auctionStrategy),  # AUCTION_MATCH, AUCTION_IMPROVEMENT, AUCTION_TRANSPARENT
+                 make_field_handle_empty(order.startingPrice),
+                 make_field_handle_empty(order.stockRefPrice),
+                 make_field_handle_empty(order.delta),
+                 make_field_handle_empty(order.stockRangeLower),
+                 make_field_handle_empty(order.stockRangeUpper),
 
-            make_field( order.overridePercentageConstraints),    #srv v22 and above
+                 make_field(order.overridePercentageConstraints),  # srv v22 and above
 
-            # Volatility orders (srv v26 and above)
-            make_field_handle_empty( order.volatility),
-            make_field_handle_empty( order.volatilityType),
-            make_field( order.deltaNeutralOrderType),             # srv v28 and above
-            make_field_handle_empty( order.deltaNeutralAuxPrice)] # srv v28 and above
-
-        if order.deltaNeutralOrderType:
-            flds += [make_field( order.deltaNeutralConId),
-                make_field( order.deltaNeutralSettlingFirm),
-                make_field( order.deltaNeutralClearingAccount),
-                make_field( order.deltaNeutralClearingIntent)]
+                 # Volatility orders (srv v26 and above)
+                 make_field_handle_empty(order.volatility),
+                 make_field_handle_empty(order.volatilityType),
+                 make_field(order.deltaNeutralOrderType),  # srv v28 and above
+                 make_field_handle_empty(order.deltaNeutralAuxPrice)]  # srv v28 and above
 
         if order.deltaNeutralOrderType:
-            flds += [make_field( order.deltaNeutralOpenClose),
-                make_field( order.deltaNeutralShortSale),
-                make_field( order.deltaNeutralShortSaleSlot),
-                make_field( order.deltaNeutralDesignatedLocation)]
+            flds += [make_field(order.deltaNeutralConId),
+                     make_field(order.deltaNeutralSettlingFirm),
+                     make_field(order.deltaNeutralClearingAccount),
+                     make_field(order.deltaNeutralClearingIntent)]
 
-        flds += [make_field( order.continuousUpdate),
-            make_field_handle_empty( order.referencePriceType),
-            make_field_handle_empty( order.trailStopPrice)] # srv v30 and above
+        if order.deltaNeutralOrderType:
+            flds += [make_field(order.deltaNeutralOpenClose),
+                     make_field(order.deltaNeutralShortSale),
+                     make_field(order.deltaNeutralShortSaleSlot),
+                     make_field(order.deltaNeutralDesignatedLocation)]
 
-        flds.append(make_field_handle_empty( order.trailingPercent))
+        flds += [make_field(order.continuousUpdate),
+                 make_field_handle_empty(order.referencePriceType),
+                 make_field_handle_empty(order.trailStopPrice)]  # srv v30 and above
+
+        flds.append(make_field_handle_empty(order.trailingPercent))
 
         # SCALE orders
-        flds += [make_field_handle_empty( order.scaleInitLevelSize),
-            make_field_handle_empty( order.scaleSubsLevelSize)]
+        flds += [make_field_handle_empty(order.scaleInitLevelSize),
+                 make_field_handle_empty(order.scaleSubsLevelSize)]
 
-        flds.append(make_field_handle_empty( order.scalePriceIncrement))
+        flds.append(make_field_handle_empty(order.scalePriceIncrement))
 
         if order.scalePriceIncrement != UNSET_DOUBLE and order.scalePriceIncrement > 0.0:
+            flds += [make_field_handle_empty(order.scalePriceAdjustValue),
+                     make_field_handle_empty(order.scalePriceAdjustInterval),
+                     make_field_handle_empty(order.scaleProfitOffset),
+                     make_field(order.scaleAutoReset),
+                     make_field_handle_empty(order.scaleInitPosition),
+                     make_field_handle_empty(order.scaleInitFillQty),
+                     make_field(order.scaleRandomPercent)]
 
-            flds += [make_field_handle_empty( order.scalePriceAdjustValue),
-                make_field_handle_empty( order.scalePriceAdjustInterval),
-                make_field_handle_empty( order.scaleProfitOffset),
-                make_field( order.scaleAutoReset),
-                make_field_handle_empty( order.scaleInitPosition),
-                make_field_handle_empty( order.scaleInitFillQty),
-                make_field( order.scaleRandomPercent)]
-
-        flds += [make_field( order.scaleTable),
-                make_field( order.activeStartTime),
-                make_field( order.activeStopTime)]
+        flds += [make_field(order.scaleTable),
+                 make_field(order.activeStartTime),
+                 make_field(order.activeStopTime)]
 
         # HEDGE orders
-        flds.append(make_field( order.hedgeType))
+        flds.append(make_field(order.hedgeType))
         if order.hedgeType:
-            flds.append(make_field( order.hedgeParam))
+            flds.append(make_field(order.hedgeParam))
 
-        flds.append(make_field( order.optOutSmartRouting))
+        flds.append(make_field(order.optOutSmartRouting))
 
-        flds += [make_field( order.clearingAccount),
-                make_field( order.clearingIntent)]
+        flds += [make_field(order.clearingAccount),
+                 make_field(order.clearingIntent)]
 
-        flds.append(make_field( order.notHeld))
+        flds.append(make_field(order.notHeld))
 
         if contract.deltaNeutralContract:
-                flds += [make_field(True),
-                    make_field(contract.deltaNeutralContract.conId),
-                    make_field(contract.deltaNeutralContract.delta),
-                    make_field(contract.deltaNeutralContract.price)]
+            flds += [make_field(True),
+                     make_field(contract.deltaNeutralContract.con_id),
+                     make_field(contract.deltaNeutralContract.delta),
+                     make_field(contract.deltaNeutralContract.price)]
         else:
             flds.append(make_field(False))
 
-        flds.append(make_field( order.algoStrategy))
+        flds.append(make_field(order.algoStrategy))
         if order.algoStrategy:
             algoParamsCount = len(order.algoParams) if order.algoParams else 0
             flds.append(make_field(algoParamsCount))
             if algoParamsCount > 0:
                 for algoParam in order.algoParams:
                     flds += [make_field(algoParam.tag),
-                        make_field(algoParam.value)]
+                             make_field(algoParam.value)]
 
-        flds.append(make_field( order.algoId))
+        flds.append(make_field(order.algoId))
 
-        flds.append(make_field( order.whatIf)) # srv v36 and above
+        flds.append(make_field(order.whatIf))  # srv v36 and above
 
         # send miscOptions parameter
         miscOptionsStr = ""
         if order.orderMiscOptions:
             for tagValue in order.orderMiscOptions:
                 miscOptionsStr += str(tagValue)
-        flds.append(make_field( miscOptionsStr))
+        flds.append(make_field(miscOptionsStr))
 
         flds.append(make_field(order.solicited))
 
         flds += [make_field(order.randomizeSize),
-            make_field(order.randomizePrice)]
+                 make_field(order.randomizePrice)]
 
         if order.orderType == "PEG BENCH":
             flds += [make_field(order.referenceContractId),
-                make_field(order.isPeggedChangeAmountDecrease),
-                make_field(order.peggedChangeAmount),
-                make_field(order.referenceChangeAmount),
-                make_field(order.referenceExchangeId)]
+                     make_field(order.isPeggedChangeAmountDecrease),
+                     make_field(order.peggedChangeAmount),
+                     make_field(order.referenceChangeAmount),
+                     make_field(order.referenceExchangeId)]
 
         flds.append(make_field(len(order.conditions)))
 
@@ -1256,27 +1255,27 @@ class LightIBrokerClient(object):
                 flds += cond.make_fields()
 
             flds += [make_field(order.conditionsIgnoreRth),
-                make_field(order.conditionsCancelOrder)]
+                     make_field(order.conditionsCancelOrder)]
 
         flds += [make_field(order.adjustedOrderType),
-        make_field(order.triggerPrice),
-        make_field(order.lmtPriceOffset),
-        make_field(order.adjustedStopPrice),
-        make_field(order.adjustedStopLimitPrice),
-        make_field(order.adjustedTrailingAmount),
-        make_field(order.adjustableTrailingUnit)]
+                 make_field(order.triggerPrice),
+                 make_field(order.lmtPriceOffset),
+                 make_field(order.adjustedStopPrice),
+                 make_field(order.adjustedStopLimitPrice),
+                 make_field(order.adjustedTrailingAmount),
+                 make_field(order.adjustableTrailingUnit)]
 
-        flds.append(make_field( order.extOperator))
+        flds.append(make_field(order.extOperator))
 
         flds += [make_field(order.softDollarTier.name),
-            make_field(order.softDollarTier.val)]
+                 make_field(order.softDollarTier.val)]
 
-        flds.append(make_field( order.cashQty))
+        flds.append(make_field(order.cashQty))
 
-        flds.append(make_field( order.mifid2DecisionMaker))
-        flds.append(make_field( order.mifid2DecisionAlgo))
-        flds.append(make_field( order.mifid2ExecutionTrader))
-        flds.append(make_field( order.mifid2ExecutionAlgo))
+        flds.append(make_field(order.mifid2DecisionMaker))
+        flds.append(make_field(order.mifid2DecisionAlgo))
+        flds.append(make_field(order.mifid2ExecutionTrader))
+        flds.append(make_field(order.mifid2ExecutionAlgo))
 
         if self.server_version() >= MIN_SERVER_VER_AUTO_PRICE_FOR_HEDGE:
             flds.append(make_field(order.dontUseAutoPriceForHedge))
@@ -1288,13 +1287,13 @@ class LightIBrokerClient(object):
             flds.append(make_field(order.discretionaryUpToLimitPrice))
 
         if self.server_version() >= MIN_SERVER_VER_PRICE_MGMT_ALGO:
-            flds.append(make_field_handle_empty(UNSET_INTEGER if order.usePriceMgmtAlgo == None else 1 if order.usePriceMgmtAlgo else 0))
+            flds.append(make_field_handle_empty(
+                UNSET_INTEGER if order.usePriceMgmtAlgo == None else 1 if order.usePriceMgmtAlgo else 0))
 
         msg = "".join(flds)
         self.send_msg(msg)
 
-
-    def cancelOrder(self, orderId:OrderId):
+    def cancelOrder(self, orderId: OrderId):
         """Call this function to cancel an order.
 
         orderId:OrderId - The order ID that was specified previously in the call
@@ -1309,11 +1308,10 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.CANCEL_ORDER) \
-            + make_field(VERSION) \
-            + make_field(orderId)
+              + make_field(VERSION) \
+              + make_field(orderId)
 
         self.send_msg(msg)
-
 
     def reqOpenOrders(self):
         """Call this function to request the open orders that were
@@ -1334,11 +1332,11 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.REQ_OPEN_ORDERS) \
-            + make_field(VERSION)
+              + make_field(VERSION)
 
         self.send_msg(msg)
 
-    def reqAutoOpenOrders(self, bAutoBind:bool):
+    def reqAutoOpenOrders(self, bAutoBind: bool):
         """Call this function to request that newly created TWS orders
         be implicitly associated with the client. When a new TWS order is
         created, the order will be associated with the client, and fed back
@@ -1359,11 +1357,10 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.REQ_AUTO_OPEN_ORDERS) \
-            + make_field(VERSION) \
-            + make_field(bAutoBind)
+              + make_field(VERSION) \
+              + make_field(bAutoBind)
 
         self.send_msg(msg)
-
 
     def reqAllOpenOrders(self):
         """Call this function to request the open orders placed from all
@@ -1382,10 +1379,9 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.REQ_ALL_OPEN_ORDERS) \
-            + make_field(VERSION)
+              + make_field(VERSION)
 
         self.send_msg(msg)
-
 
     def reqGlobalCancel(self):
         """Use this function to cancel all open orders globally. It
@@ -1403,12 +1399,11 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.REQ_GLOBAL_CANCEL) \
-           + make_field(VERSION)
+              + make_field(VERSION)
 
         self.send_msg(msg)
 
-
-    def reqIds(self, numIds:int):
+    def reqIds(self, numIds: int):
         """Call this function to request from TWS the next valid ID that
         can be used when placing an order.  After calling this function, the
         nextValidId() event will be triggered, and the id returned is that next
@@ -1426,15 +1421,14 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.REQ_IDS) \
-           + make_field(VERSION)   \
-           + make_field(numIds)
+              + make_field(VERSION) \
+              + make_field(numIds)
 
         self.send_msg(msg)
 
     #########################################################################
     ################## Daily PnL
     #########################################################################
-
 
     def reqPnL(self, reqId: int, account: str, modelCode: str):
 
@@ -1445,9 +1439,9 @@ class LightIBrokerClient(object):
             return
 
         msg = make_field(Outgoing.REQ_PNL) \
-            + make_field(reqId) \
-            + make_field(account) \
-            + make_field(modelCode)
+              + make_field(reqId) \
+              + make_field(account) \
+              + make_field(modelCode)
 
         self.send_msg(msg)
 
@@ -1459,9 +1453,8 @@ class LightIBrokerClient(object):
             self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
-
         msg = make_field(Outgoing.CANCEL_PNL) \
-            + make_field(reqId)
+              + make_field(reqId)
 
         self.send_msg(msg)
 
@@ -1474,10 +1467,10 @@ class LightIBrokerClient(object):
             return
 
         msg = make_field(Outgoing.REQ_PNL_SINGLE) \
-            + make_field(reqId) \
-            + make_field(account) \
-            + make_field(modelCode) \
-            + make_field(conid)
+              + make_field(reqId) \
+              + make_field(account) \
+              + make_field(modelCode) \
+              + make_field(conid)
 
         self.send_msg(msg)
 
@@ -1490,7 +1483,7 @@ class LightIBrokerClient(object):
             return
 
         msg = make_field(Outgoing.CANCEL_PNL_SINGLE) \
-            + make_field(reqId)
+              + make_field(reqId)
 
         self.send_msg(msg)
 
@@ -1498,8 +1491,7 @@ class LightIBrokerClient(object):
     ################## Executions
     #########################################################################
 
-
-    def reqExecutions(self, reqId:int, execFilter:ExecutionFilter):
+    def reqExecutions(self, reqId: int, execFilter: ExecutionFilter):
         """When this function is called, the execution reports that meet the
         filter criteria are downloaded to the client via the execDetails()
         function. To view executions beyond the past 24 hours, open the
@@ -1525,18 +1517,18 @@ class LightIBrokerClient(object):
         # send req open orders msg
         flds = []
         flds += [make_field(Outgoing.REQ_EXECUTIONS),
-            make_field(VERSION)]
+                 make_field(VERSION)]
 
-        flds += [make_field( reqId),]
+        flds += [make_field(reqId), ]
 
         # Send the execution rpt filter data (srv v9 and above)
-        flds += [make_field( execFilter.clientId),
-            make_field(execFilter.acctCode),
-            make_field(execFilter.time),
-            make_field(execFilter.symbol),
-            make_field(execFilter.secType),
-            make_field(execFilter.exchange),
-            make_field(execFilter.side)]
+        flds += [make_field(execFilter.clientId),
+                 make_field(execFilter.acctCode),
+                 make_field(execFilter.time),
+                 make_field(execFilter.symbol),
+                 make_field(execFilter.sec_type),
+                 make_field(execFilter.exchange),
+                 make_field(execFilter.side)]
 
         msg = "".join(flds)
         self.send_msg(msg)
@@ -1557,8 +1549,8 @@ class LightIBrokerClient(object):
 
         self.send_msg(msg)
 
-    def reqMktDepth(self, reqId:TickerId, contract:Contract,
-                    numRows:int, isSmartDepth:bool, mktDepthOptions:TagValueList):
+    def reqMktDepth(self, reqId: TickerId, contract: Contract,
+                    numRows: int, isSmartDepth: bool, mktDepthOptions: TagValueList):
         """Call this function to request market depth for a specific
         contract. The market depth will be returned by the updateMktDepth() and
         updateMktDepthL2() events.
@@ -1589,40 +1581,39 @@ class LightIBrokerClient(object):
         # send req mkt depth msg
         flds = []
         flds += [make_field(Outgoing.REQ_MKT_DEPTH),
-            make_field(VERSION),
-            make_field(reqId)]
+                 make_field(VERSION),
+                 make_field(reqId)]
 
         # send contract fields
-        flds += [make_field(contract.conId),]
+        flds += [make_field(contract.con_id), ]
         flds += [make_field(contract.symbol),
-            make_field(contract.secType),
-            make_field(contract.lastTradeDateOrContractMonth),
-            make_field(contract.strike),
-            make_field(contract.right),
-            make_field(contract.multiplier), # srv v15 and above
-            make_field(contract.exchange),]
+                 make_field(contract.sec_type),
+                 make_field(contract.last_trade_date_or_contract_month),
+                 make_field(contract.strike),
+                 make_field(contract.right),
+                 make_field(contract.multiplier),  # srv v15 and above
+                 make_field(contract.exchange), ]
         if self.server_version() >= MIN_SERVER_VER_MKT_DEPTH_PRIM_EXCHANGE:
-            flds += [make_field(contract.primaryExchange),]
+            flds += [make_field(contract.primary_exchange), ]
         flds += [make_field(contract.currency),
-            make_field(contract.localSymbol)]
-        flds += [make_field(contract.tradingClass),]
+                 make_field(contract.local_symbol)]
+        flds += [make_field(contract.trading_class), ]
 
-        flds += [make_field(numRows),] # srv v19 and above
+        flds += [make_field(numRows), ]  # srv v19 and above
 
-        flds += [make_field(isSmartDepth),]
+        flds += [make_field(isSmartDepth), ]
 
         # send mktDepthOptions parameter
-        #current doc says this part if for "internal use only" -> won't support it
+        # current doc says this part if for "internal use only" -> won't support it
         if mktDepthOptions:
             raise NotImplementedError("not supported")
         mktDataOptionsStr = ""
-        flds += [make_field(mktDataOptionsStr),]
+        flds += [make_field(mktDataOptionsStr), ]
 
         msg = "".join(flds)
         self.send_msg(msg)
 
-
-    def cancelMktDepth(self, reqId:TickerId, isSmartDepth:bool):
+    def cancelMktDepth(self, reqId: TickerId, isSmartDepth: bool):
         """After calling this function, market depth data for the specified id
         will stop flowing.
 
@@ -1641,8 +1632,8 @@ class LightIBrokerClient(object):
         # send cancel mkt depth msg
         flds = []
         flds += [make_field(Outgoing.CANCEL_MKT_DEPTH),
-            make_field(VERSION),
-            make_field(reqId)]
+                 make_field(VERSION),
+                 make_field(reqId)]
 
         if self.server_version() >= MIN_SERVER_VER_SMART_DEPTH:
             flds += [make_field(isSmartDepth)]
@@ -1651,12 +1642,11 @@ class LightIBrokerClient(object):
 
         self.send_msg(msg)
 
-
     #########################################################################
     ################## News Bulletins
     #########################################################################
 
-    def reqNewsBulletins(self, allMsgs:bool):
+    def reqNewsBulletins(self, allMsgs: bool):
         """Call this function to start receiving news bulletins. Each bulletin
         will be returned by the updateNewsBulletin() event.
 
@@ -1673,11 +1663,10 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.REQ_NEWS_BULLETINS) \
-            + make_field(VERSION) \
-            + make_field(allMsgs)
+              + make_field(VERSION) \
+              + make_field(allMsgs)
 
         self.send_msg(msg)
-
 
     def cancelNewsBulletins(self):
         """Call this function to stop receiving news bulletins."""
@@ -1691,10 +1680,9 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.CANCEL_NEWS_BULLETINS) \
-            + make_field(VERSION)
+              + make_field(VERSION)
 
         self.send_msg(msg)
-
 
     #########################################################################
     ################## Financial Advisors
@@ -1715,12 +1703,11 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.REQ_MANAGED_ACCTS) \
-           + make_field(VERSION)
+              + make_field(VERSION)
 
         return self.send_msg(msg)
 
-
-    def requestFA(self, faData:FaDataType):
+    def requestFA(self, faData: FaDataType):
         """Call this function to request FA configuration information from TWS.
         The data returns in an XML string via a "receiveFA" ActiveX event.
 
@@ -1739,13 +1726,12 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.REQ_FA) \
-           + make_field(VERSION) \
-           + make_field(int(faData))
+              + make_field(VERSION) \
+              + make_field(int(faData))
 
         return self.send_msg(msg)
 
-
-    def replaceFA(self, faData:FaDataType , cxml:str):
+    def replaceFA(self, faData: FaDataType, cxml: str):
         """Call this function to modify FA configuration information from the
         API. Note that this can also be done manually in TWS itself.
 
@@ -1766,16 +1752,15 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.REPLACE_FA) \
-           + make_field(VERSION) \
-           + make_field(int(faData)) \
-           + make_field(cxml) \
-
+              + make_field(VERSION) \
+              + make_field(int(faData)) \
+              + make_field(cxml)
+        
         return self.send_msg(msg)
 
     #########################################################################
     ################## Market Scanners
     #########################################################################
-
 
     def reqScannerParameters(self):
         """Requests an XML string that describes all possible scanner queries."""
@@ -1789,16 +1774,14 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.REQ_SCANNER_PARAMETERS) \
-           + make_field(VERSION)
+              + make_field(VERSION)
 
         self.send_msg(msg)
 
-
-
-    def reqScannerSubscription(self, reqId:int,
-                               subscription:ScannerSubscription,
-                               scannerSubscriptionOptions:TagValueList,
-                               scannerSubscriptionFilterOptions:TagValueList):
+    def reqScannerSubscription(self, reqId: int,
+                               subscription: ScannerSubscription,
+                               scannerSubscriptionOptions: TagValueList,
+                               scannerSubscriptionFilterOptions: TagValueList):
         """reqId:int - The ticker ID. Must be a unique value.
         scannerSubscription:ScannerSubscription - This structure contains
             possible parameters used to filter results.
@@ -1813,7 +1796,7 @@ class LightIBrokerClient(object):
 
         if self.server_version() < MIN_SERVER_VER_SCANNER_GENERIC_OPTS and scannerSubscriptionFilterOptions is not None:
             self.event_handler.error(NO_VALID_ID, UPDATE_TWS.code(), UPDATE_TWS.msg() +
-                               " It does not support API scanner subscription generic filter options")
+                                     " It does not support API scanner subscription generic filter options")
             return
 
         VERSION = 4
@@ -1824,28 +1807,28 @@ class LightIBrokerClient(object):
         if self.server_version() < MIN_SERVER_VER_SCANNER_GENERIC_OPTS:
             flds += [make_field(VERSION)]
 
-        flds +=[make_field(reqId),
-            make_field_handle_empty(subscription.numberOfRows),
-            make_field(subscription.instrument),
-            make_field(subscription.locationCode),
-            make_field(subscription.scanCode),
-            make_field_handle_empty(subscription.abovePrice),
-            make_field_handle_empty(subscription.belowPrice),
-            make_field_handle_empty(subscription.aboveVolume),
-            make_field_handle_empty(subscription.marketCapAbove),
-            make_field_handle_empty(subscription.marketCapBelow),
-            make_field(subscription.moodyRatingAbove),
-            make_field(subscription.moodyRatingBelow),
-            make_field(subscription.spRatingAbove),
-            make_field(subscription.spRatingBelow),
-            make_field(subscription.maturityDateAbove),
-            make_field(subscription.maturityDateBelow),
-            make_field_handle_empty(subscription.couponRateAbove),
-            make_field_handle_empty(subscription.couponRateBelow),
-            make_field(subscription.excludeConvertible),
-            make_field_handle_empty(subscription.averageOptionVolumeAbove), # srv v25 and above
-            make_field(subscription.scannerSettingPairs), # srv v25 and above
-            make_field(subscription.stockTypeFilter)] # srv v27 and above
+        flds += [make_field(reqId),
+                 make_field_handle_empty(subscription.numberOfRows),
+                 make_field(subscription.instrument),
+                 make_field(subscription.locationCode),
+                 make_field(subscription.scanCode),
+                 make_field_handle_empty(subscription.abovePrice),
+                 make_field_handle_empty(subscription.belowPrice),
+                 make_field_handle_empty(subscription.aboveVolume),
+                 make_field_handle_empty(subscription.marketCapAbove),
+                 make_field_handle_empty(subscription.marketCapBelow),
+                 make_field(subscription.moodyRatingAbove),
+                 make_field(subscription.moodyRatingBelow),
+                 make_field(subscription.spRatingAbove),
+                 make_field(subscription.spRatingBelow),
+                 make_field(subscription.maturityDateAbove),
+                 make_field(subscription.maturityDateBelow),
+                 make_field_handle_empty(subscription.couponRateAbove),
+                 make_field_handle_empty(subscription.couponRateBelow),
+                 make_field(subscription.excludeConvertible),
+                 make_field_handle_empty(subscription.averageOptionVolumeAbove),  # srv v25 and above
+                 make_field(subscription.scannerSettingPairs),  # srv v25 and above
+                 make_field(subscription.stockTypeFilter)]  # srv v27 and above
 
         # send scannerSubscriptionFilterOptions parameter
         if self.server_version() >= MIN_SERVER_VER_SCANNER_GENERIC_OPTS:
@@ -1860,14 +1843,12 @@ class LightIBrokerClient(object):
         if scannerSubscriptionOptions:
             for tagValueOpt in scannerSubscriptionOptions:
                 scannerSubscriptionOptionsStr += str(tagValueOpt)
-        flds += [make_field(scannerSubscriptionOptionsStr),]
+        flds += [make_field(scannerSubscriptionOptionsStr), ]
 
         msg = "".join(flds)
         self.send_msg(msg)
 
-
-
-    def cancelScannerSubscription(self, reqId:int):
+    def cancelScannerSubscription(self, reqId: int):
         """reqId:int - The ticker ID. Must be a unique value."""
 
         self.handle_request(current_fn_name(), vars())
@@ -1879,20 +1860,18 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.CANCEL_SCANNER_SUBSCRIPTION) \
-           + make_field(VERSION)   \
-           + make_field(reqId)
+              + make_field(VERSION) \
+              + make_field(reqId)
 
         self.send_msg(msg)
-
 
     #########################################################################
     ################## Real Time Bars
     #########################################################################
 
-
-    def reqRealTimeBars(self, reqId:TickerId, contract:Contract, barSize:int,
-                        whatToShow:str, useRTH:bool,
-                        realTimeBarsOptions:TagValueList):
+    def reqRealTimeBars(self, reqId: TickerId, contract: Contract, barSize: int,
+                        whatToShow: str, useRTH: bool,
+                        realTimeBarsOptions: TagValueList):
         """Call the reqRealTimeBars() function to start receiving real time bar
         results through the realtimeBar() EWrapper function.
 
@@ -1928,39 +1907,38 @@ class LightIBrokerClient(object):
 
         flds = []
         flds += [make_field(Outgoing.REQ_REAL_TIME_BARS),
-            make_field(VERSION),
-            make_field(reqId)]
+                 make_field(VERSION),
+                 make_field(reqId)]
 
         # send contract fields
-        flds += [make_field(contract.conId),]
+        flds += [make_field(contract.con_id), ]
         flds += [make_field(contract.symbol),
-            make_field(contract.secType),
-            make_field(contract.lastTradeDateOrContractMonth),
-            make_field(contract.strike),
-            make_field(contract.right),
-            make_field(contract.multiplier),
-            make_field(contract.exchange),
-            make_field(contract.primaryExchange),
-            make_field(contract.currency),
-            make_field(contract.localSymbol)]
+                 make_field(contract.sec_type),
+                 make_field(contract.last_trade_date_or_contract_month),
+                 make_field(contract.strike),
+                 make_field(contract.right),
+                 make_field(contract.multiplier),
+                 make_field(contract.exchange),
+                 make_field(contract.primary_exchange),
+                 make_field(contract.currency),
+                 make_field(contract.local_symbol)]
 
-        flds += [make_field(contract.tradingClass),]
+        flds += [make_field(contract.trading_class), ]
         flds += [make_field(barSize),
-            make_field(whatToShow),
-            make_field(useRTH)]
+                 make_field(whatToShow),
+                 make_field(useRTH)]
 
         # send realTimeBarsOptions parameter
         realTimeBarsOptionsStr = ""
         if realTimeBarsOptions:
             for tagValueOpt in realTimeBarsOptions:
                 realTimeBarsOptionsStr += str(tagValueOpt)
-        flds += [make_field(realTimeBarsOptionsStr),]
+        flds += [make_field(realTimeBarsOptionsStr), ]
 
         msg = "".join(flds)
         self.send_msg(msg)
 
-
-    def cancelRealTimeBars(self, reqId:TickerId):
+    def cancelRealTimeBars(self, reqId: TickerId):
         """Call the cancelRealTimeBars() function to stop receiving real time bar results.
 
         reqId:TickerId - The Id that was specified in the call to reqRealTimeBars(). """
@@ -1976,27 +1954,25 @@ class LightIBrokerClient(object):
         # send req mkt data msg
         flds = []
         flds += [make_field(Outgoing.CANCEL_REAL_TIME_BARS),
-            make_field(VERSION),
-            make_field(reqId)]
+                 make_field(VERSION),
+                 make_field(reqId)]
 
         msg = "".join(flds)
         self.send_msg(msg)
-
 
     #########################################################################
     ################## Fundamental Data
     #########################################################################
 
-
-    def reqFundamentalData(self, reqId:TickerId , contract:Contract,
-                           reportType:str, fundamentalDataOptions:TagValueList):
+    def reqFundamentalData(self, reqId: TickerId, contract: Contract,
+                           reportType: str, fundamentalDataOptions: TagValueList):
         """Call this function to receive fundamental data for
         stocks. The appropriate market data subscription must be set up in
         Account Management before you can receive this data.
         Fundamental data will be returned at EWrapper.fundamentalData().
 
         reqFundamentalData() can handle conid specified in the Contract object,
-        but not tradingClass or multiplier. This is because reqFundamentalData()
+        but not trading_class or multiplier. This is because reqFundamentalData()
         is used only for stocks and stocks do not have a multiplier and
         trading class.
 
@@ -2022,18 +1998,18 @@ class LightIBrokerClient(object):
 
         flds = []
         flds += [make_field(Outgoing.REQ_FUNDAMENTAL_DATA),
-            make_field(VERSION),
-            make_field(reqId)]
+                 make_field(VERSION),
+                 make_field(reqId)]
 
         # send contract fields
-        flds += [make_field( contract.conId),]
+        flds += [make_field(contract.con_id), ]
         flds += [make_field(contract.symbol),
-            make_field(contract.secType),
-            make_field(contract.exchange),
-            make_field(contract.primaryExchange),
-            make_field(contract.currency),
-            make_field(contract.localSymbol),
-            make_field(reportType)]
+                 make_field(contract.sec_type),
+                 make_field(contract.exchange),
+                 make_field(contract.primary_exchange),
+                 make_field(contract.currency),
+                 make_field(contract.local_symbol),
+                 make_field(reportType)]
 
         fundDataOptStr = ""
         tagValuesCount = len(fundamentalDataOptions) if fundamentalDataOptions else 0
@@ -2041,13 +2017,12 @@ class LightIBrokerClient(object):
             for fundDataOption in fundamentalDataOptions:
                 fundDataOptStr += str(fundDataOption)
         flds += [make_field(tagValuesCount),
-            make_field(fundDataOptStr)]
+                 make_field(fundDataOptStr)]
 
         msg = "".join(flds)
         self.send_msg(msg)
 
-
-    def cancelFundamentalData(self, reqId:TickerId ):
+    def cancelFundamentalData(self, reqId: TickerId):
         """Call this function to stop receiving fundamental data.
 
         reqId:TickerId - The ID of the data request."""
@@ -2061,11 +2036,10 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.CANCEL_FUNDAMENTAL_DATA) \
-           + make_field(VERSION)   \
-           + make_field(reqId)
+              + make_field(VERSION) \
+              + make_field(reqId)
 
         self.send_msg(msg)
-
 
     ########################################################################
     ################## News
@@ -2082,7 +2056,6 @@ class LightIBrokerClient(object):
         msg = make_field(Outgoing.REQ_NEWS_PROVIDERS)
 
         self.send_msg(msg)
-
 
     def reqNewsArticle(self, reqId: int, providerCode: str, articleId: str, newsArticleOptions: TagValueList):
 
@@ -2104,14 +2077,13 @@ class LightIBrokerClient(object):
         if newsArticleOptions:
             for tagValue in newsArticleOptions:
                 newsArticleOptionsStr += str(tagValue)
-        flds += [make_field(newsArticleOptionsStr),]
+        flds += [make_field(newsArticleOptionsStr), ]
 
         msg = "".join(flds)
         self.send_msg(msg)
 
-
-    def reqHistoricalNews(self, reqId: int, conId: int, providerCodes: str,
-                      startDateTime: str, endDateTime: str, totalResults: int, historicalNewsOptions: TagValueList):
+    def reqHistoricalNews(self, reqId: int, con_id: int, providerCodes: str,
+                          startDateTime: str, endDateTime: str, totalResults: int, historicalNewsOptions: TagValueList):
 
         self.handle_request(current_fn_name(), vars())
 
@@ -2123,7 +2095,7 @@ class LightIBrokerClient(object):
 
         flds += [make_field(Outgoing.REQ_HISTORICAL_NEWS),
                  make_field(reqId),
-                 make_field(conId),
+                 make_field(con_id),
                  make_field(providerCodes),
                  make_field(startDateTime),
                  make_field(endDateTime),
@@ -2134,20 +2106,19 @@ class LightIBrokerClient(object):
         if historicalNewsOptions:
             for tagValue in historicalNewsOptionsStr:
                 historicalNewsOptionsStr += str(tagValue)
-        flds += [make_field(historicalNewsOptionsStr),]
+        flds += [make_field(historicalNewsOptionsStr), ]
 
         msg = "".join(flds)
         self.send_msg(msg)
-
 
     #########################################################################
     ################## Display Groups
     #########################################################################
 
-
     def queryDisplayGroups(self, reqId: int):
         """API requests used to integrate with TWS color-grouped windows (display groups).
-        TWS color-grouped windows are identified by an integer number. Currently that number ranges from 1 to 7 and are mapped to specific colors, as indicated in TWS.
+        TWS color-grouped windows are identified by an integer number. Currently that number ranges from 1 to 7 and 
+        are mapped to specific colors, as indicated in TWS.
 
         reqId:int - The unique number that will be associated with the
             response """
@@ -2161,13 +2132,12 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.QUERY_DISPLAY_GROUPS) \
-           + make_field(VERSION)   \
-           + make_field(reqId)
+              + make_field(VERSION) \
+              + make_field(reqId)
 
         self.send_msg(msg)
 
-
-    def subscribeToGroupEvents(self, reqId:int, groupId:int):
+    def subscribeToGroupEvents(self, reqId: int, groupId: int):
         """reqId:int - The unique number associated with the notification.
         groupId:int - The ID of the group, currently it is a number from 1 to 7.
             This is the display group subscription request sent by the API to TWS."""
@@ -2181,14 +2151,13 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.SUBSCRIBE_TO_GROUP_EVENTS) \
-           + make_field(VERSION)   \
-           + make_field(reqId) \
-           + make_field(groupId)
+              + make_field(VERSION) \
+              + make_field(reqId) \
+              + make_field(groupId)
 
         self.send_msg(msg)
 
-
-    def updateDisplayGroup(self, reqId:int, contractInfo:str):
+    def updateDisplayGroup(self, reqId: int, contractInfo: str):
         """reqId:int - The requestId specified in subscribeToGroupEvents().
         contractInfo:str - The encoded value that uniquely represents the
             contract in IB. Possible values include:
@@ -2207,14 +2176,13 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.UPDATE_DISPLAY_GROUP) \
-           + make_field(VERSION)   \
-           + make_field(reqId) \
-           + make_field(contractInfo)
+              + make_field(VERSION) \
+              + make_field(reqId) \
+              + make_field(contractInfo)
 
         self.send_msg(msg)
 
-
-    def unsubscribeFromGroupEvents(self, reqId:int):
+    def unsubscribeFromGroupEvents(self, reqId: int):
         """reqId:int - The requestId specified in subscribeToGroupEvents()."""
 
         self.handle_request(current_fn_name(), vars())
@@ -2226,13 +2194,12 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.UNSUBSCRIBE_FROM_GROUP_EVENTS) \
-           + make_field(VERSION)   \
-           + make_field(reqId)
+              + make_field(VERSION) \
+              + make_field(reqId)
 
         self.send_msg(msg)
 
-
-    def verifyRequest(self, apiName:str, apiVersion:str):
+    def verifyRequest(self, apiName: str, apiVersion: str):
         """For IB's internal purpose. Allows to provide means of verification
         between the TWS and third party programs."""
 
@@ -2244,20 +2211,19 @@ class LightIBrokerClient(object):
 
         if not self.extraAuth:
             self.event_handler.error(NO_VALID_ID, BAD_MESSAGE.code(), BAD_MESSAGE.msg() +
-                    "  Intent to authenticate needs to be expressed during initial connect request.")
+                                     "  Intent to authenticate needs to be expressed during initial connect request.")
             return
 
         VERSION = 1
 
         msg = make_field(Outgoing.VERIFY_REQUEST) \
-           + make_field(VERSION)   \
-           + make_field(apiName)   \
-           + make_field(apiVersion)
+              + make_field(VERSION) \
+              + make_field(apiName) \
+              + make_field(apiVersion)
 
         self.send_msg(msg)
 
-
-    def verifyMessage(self, apiData:str):
+    def verifyMessage(self, apiData: str):
         """For IB's internal purpose. Allows to provide means of verification
         between the TWS and third party programs."""
 
@@ -2270,14 +2236,13 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.VERIFY_MESSAGE) \
-           + make_field(VERSION)   \
-           + make_field(apiData)
+              + make_field(VERSION) \
+              + make_field(apiData)
 
         self.send_msg(msg)
 
-
-    def verifyAndAuthRequest(self, apiName:str, apiVersion:str,
-                             opaqueIsvKey:str):
+    def verifyAndAuthRequest(self, apiName: str, apiVersion: str,
+                             opaqueIsvKey: str):
         """For IB's internal purpose. Allows to provide means of verification
         between the TWS and third party programs."""
 
@@ -2289,21 +2254,20 @@ class LightIBrokerClient(object):
 
         if not self.extraAuth:
             self.event_handler.error(NO_VALID_ID, BAD_MESSAGE.code(), BAD_MESSAGE.msg() +
-                    "  Intent to authenticate needs to be expressed during initial connect request.")
+                                     "  Intent to authenticate needs to be expressed during initial connect request.")
             return
 
         VERSION = 1
 
         msg = make_field(Outgoing.VERIFY_AND_AUTH_REQUEST) \
-           + make_field(VERSION)   \
-           + make_field(apiName)   \
-           + make_field(apiVersion) \
-           + make_field(opaqueIsvKey)
+              + make_field(VERSION) \
+              + make_field(apiName) \
+              + make_field(apiVersion) \
+              + make_field(opaqueIsvKey)
 
         self.send_msg(msg)
 
-
-    def verifyAndAuthMessage(self, apiData:str, xyzResponse:str):
+    def verifyAndAuthMessage(self, apiData: str, xyzResponse: str):
         """For IB's internal purpose. Allows to provide means of verification
         between the TWS and third party programs."""
 
@@ -2316,16 +2280,15 @@ class LightIBrokerClient(object):
         VERSION = 1
 
         msg = make_field(Outgoing.VERIFY_AND_AUTH_MESSAGE) \
-           + make_field(VERSION)   \
-           + make_field(apiData)   \
-           + make_field(xyzResponse)
+              + make_field(VERSION) \
+              + make_field(apiData) \
+              + make_field(xyzResponse)
 
         self.send_msg(msg)
 
-
-    def reqSecDefOptParams(self, reqId:int, underlyingSymbol:str,
-                            futFopExchange:str, underlyingSecType:str,
-                            underlyingConId:int):
+    def reqSecDefOptParams(self, reqId: int, underlyingSymbol: str,
+                           futFopExchange: str, underlyingSecType: str,
+                           underlyingConId: int):
         """Requests security definition option parameters for viewing a
         contract's option chain reqId the ID chosen for the request
         underlyingSymbol futFopExchange The exchange on which the returned
@@ -2342,17 +2305,16 @@ class LightIBrokerClient(object):
 
         flds = []
         flds += [make_field(Outgoing.REQ_SEC_DEF_OPT_PARAMS),
-            make_field(reqId),
-            make_field(underlyingSymbol),
-            make_field(futFopExchange),
-            make_field(underlyingSecType),
-            make_field(underlyingConId)]
+                 make_field(reqId),
+                 make_field(underlyingSymbol),
+                 make_field(futFopExchange),
+                 make_field(underlyingSecType),
+                 make_field(underlyingConId)]
 
         msg = "".join(flds)
         self.send_msg(msg)
 
-
-    def reqSoftDollarTiers(self, reqId:int):
+    def reqSoftDollarTiers(self, reqId: int):
         """Requests pre-defined Soft Dollar Tiers. This is only supported for
         registered professional advisors and hedge and mutual funds who have
         configured Soft Dollar Tiers in Account Management."""
@@ -2364,10 +2326,9 @@ class LightIBrokerClient(object):
             return
 
         msg = make_field(Outgoing.REQ_SOFT_DOLLAR_TIERS) \
-           + make_field(reqId)
+              + make_field(reqId)
 
         self.send_msg(msg)
-
 
     def reqFamilyCodes(self):
 
@@ -2381,8 +2342,7 @@ class LightIBrokerClient(object):
 
         self.send_msg(msg)
 
-
-    def reqMatchingSymbols(self, reqId:int, pattern:str):
+    def reqMatchingSymbols(self, reqId: int, pattern: str):
 
         self.handle_request(current_fn_name(), vars())
 
@@ -2391,12 +2351,12 @@ class LightIBrokerClient(object):
             return
 
         msg = make_field(Outgoing.REQ_MATCHING_SYMBOLS) \
-           + make_field(reqId)   \
-           + make_field(pattern)
+              + make_field(reqId) \
+              + make_field(pattern)
 
         self.send_msg(msg)
 
-    def reqCompletedOrders(self, apiOnly:bool):
+    def reqCompletedOrders(self, apiOnly: bool):
         """Call this function to request the completed orders. If apiOnly parameter 
         is true, then only completed orders placed from API are requested. 
         Each completed order will be fed back through the
@@ -2409,7 +2369,6 @@ class LightIBrokerClient(object):
             return
 
         msg = make_field(Outgoing.REQ_COMPLETED_ORDERS) \
-            + make_field(apiOnly)
+              + make_field(apiOnly)
 
         self.send_msg(msg)
-
