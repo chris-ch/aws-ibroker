@@ -99,6 +99,12 @@ def account_stop(req_id: int):
     return {'status-code': 'OK'}
 
 
+def load_contract_details(req_id: int, contract: dict):
+    contract_model = ContractSchema().load(contract)
+    get_ibroker_client().req_contract_details(req_id=req_id, contract=contract_model)
+    return {'status-code': 'OK'}
+
+
 @Request.application
 def application(request):
     # Dispatcher is dictionary {<method_name>: callable}
@@ -108,6 +114,7 @@ def application(request):
     dispatcher["market-data-start"] = market_data_start
     dispatcher["market-data-stop"] = market_data_stop
     dispatcher["portfolio-positions"] = portfolio_positions
+    dispatcher["load-contract-details"] = load_contract_details
     response = JSONRPCResponseManager.handle(request.data, dispatcher)
     return Response(response.json, mimetype='application/json')
 
