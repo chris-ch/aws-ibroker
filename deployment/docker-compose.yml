@@ -21,3 +21,14 @@ services:
       - TZ=America/Chicago
       - VNC_PASSWORD=1234 # CHANGE ME
       - TRADING_MODE=paper # either paper or live
+
+  redis:
+    image: redis:4.0.14-buster
+
+    environment:
+      # ALLOW_EMPTY_PASSWORD is recommended only for development.
+      - ALLOW_EMPTY_PASSWORD=yes
+      - REDIS_DISABLE_COMMANDS=FLUSHDB,FLUSHALL
+
+    ports:
+      - '6379:6379'

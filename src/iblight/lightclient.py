@@ -18,8 +18,8 @@ from ibapi.execution import ExecutionFilter
 from ibapi.order import Order
 from iblight import lightcomm
 from iblight.lightcomm import make_field, make_field_handle_empty, UNSET_DOUBLE, UNSET_INTEGER
-from iblight.lightconnection import LightConnection, NO_VALID_ID, NOT_CONNECTED, CONNECT_FAIL, BAD_MESSAGE, UPDATE_TWS, \
-    BAD_LENGTH
+from iblight.lightconnection import LightConnection
+from iblight.lightconnection import NO_VALID_ID, NOT_CONNECTED, CONNECT_FAIL, BAD_MESSAGE, UPDATE_TWS, BAD_LENGTH
 from iblight.lightdecoder import ib_decode
 from iblight.model import Contract, ScannerSubscription
 from iblight.refibroker import Incoming, Outgoing
@@ -131,7 +131,8 @@ class IBrokerClientEventHandler(object):
 
         message_type = Incoming(int(fields[0]))
         data = ib_decode(message_type, fields[1:])
-        # TODO publish on redis
+
+        self._redis.publish(message_type.name, json.dumps(data, indent=2))
         logger.info('received msg id {} with fields: {}'.format(message_type.name, json.dumps(data, indent=2)))
 
 
