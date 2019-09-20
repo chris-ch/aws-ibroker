@@ -21,9 +21,10 @@ def connect_ibroker_gateway(host: str, port: int, client_id: int):
                                      + ' - needs to set all parameters with '
                                      + 'set_ibroker_params(host: str, port: int, client_id: int)')
 
+    logger.info('launching IBroker client')
     ibroker_client = LightIBrokerClient(host, port, client_id)
     ibroker_client.connect()
-
+    #ibroker_client.run()
     # This is BLOCKING: should it be running in some other thread???
 
     def run_ibroker():
@@ -43,32 +44,32 @@ def market_data_start_handler(ibroker_gateway: LightIBrokerClient):
         contract.exchange = 'SMART'
         contract.currency = 'USD'
         contract.primary_exchange = 'NASDAQ'
-        ibroker_gateway.req_market_data(req_id, contract, '', False, False)
-        return {'status-code': 'OK'}
+        status = ibroker_gateway.req_market_data(req_id, contract, '', False, False)
+        return {'status-code': status.name}
 
     return market_data_start
 
 
 def market_data_stop_handler(ibroker_gateway: LightIBrokerClient):
     def market_data_stop(req_id: int):
-        ibroker_gateway.cancel_market_data(req_id)
-        return {'status-code': 'OK'}
+        status = ibroker_gateway.cancel_market_data(req_id)
+        return {'status-code': status.name}
 
     return market_data_stop
 
 
 def portfolio_positions_handler(ibroker_gateway: LightIBrokerClient):
     def portfolio_positions():
-        ibroker_gateway.req_positions()
-        return {'status-code': 'OK'}
+        status = ibroker_gateway.req_positions()
+        return {'status-code': status.name}
 
     return portfolio_positions
 
 
 def market_data_type_handler(ibroker_gateway: LightIBrokerClient):
     def market_data_type(data_type_id: int):
-        ibroker_gateway.req_market_data_type(data_type_id)  # 4 = switch to delayed frozen data if live is not available
-        return {'status-code': 'OK'}
+        status = ibroker_gateway.req_market_data_type(data_type_id)  # 4 = switch to delayed frozen data if live is not available
+        return {'status-code': status.name}
 
     return market_data_type
 
@@ -82,8 +83,8 @@ def account_start_handler(ibroker_gateway: LightIBrokerClient):
         @param tags the fields, such as "NetLiquidation"
         @return a status
         """
-        ibroker_gateway.req_account_summary(req_id=req_id, group_name=group_name, tags=tags)
-        return {'status-code': 'OK'}
+        status = ibroker_gateway.req_account_summary(req_id=req_id, group_name=group_name, tags=tags)
+        return {'status-code': status.name}
 
     return account_start
 
@@ -96,8 +97,8 @@ def account_stop_handler(ibroker_gateway: LightIBrokerClient):
         :param req_id:
         :return:
         """
-        ibroker_gateway.cancel_account_summary(req_id)
-        return {'status-code': 'OK'}
+        status = ibroker_gateway.cancel_account_summary(req_id)
+        return {'status-code': status.name}
 
     return account_stop
 
@@ -105,8 +106,8 @@ def account_stop_handler(ibroker_gateway: LightIBrokerClient):
 def load_contract_details_handler(ibroker_gateway: LightIBrokerClient):
     def load_contract_details(req_id: int, contract: dict):
         contract_model = ContractSchema().load(contract)
-        ibroker_gateway.req_contract_details(req_id=req_id, contract=contract_model)
-        return {'status-code': 'OK'}
+        status = ibroker_gateway.req_contract_details(req_id=req_id, contract=contract_model)
+        return {'status-code': status.name}
 
     return load_contract_details
 
@@ -116,8 +117,17 @@ def application(request):
     # Dispatcher is dictionary {<method_name>: callable}
     global _ibroker_gateway
     if not _ibroker_gateway:
+        logging.info('connecting to Gateway')
         _ibroker_gateway = connect_ibroker_gateway('127.0.0.1', 4003, 0)
 
+    elif not _ibroker_gateway.is_connected():
+        logging.info('re-connecting to Gateway')
+        _ibroker_gateway = connect_ibroker_gateway('127.0.0.1', 4003, 0)
+
+    else:
+        logger.info('already connected to Gateway')
+
+    logger.info('setting application dispatchers')
     dispatcher["account-start"] = account_start_handler(_ibroker_gateway)
     dispatcher["account-stop"] = account_stop_handler(_ibroker_gateway)
     dispatcher["market-data-type"] = market_data_type_handler(_ibroker_gateway)
@@ -130,8 +140,8 @@ def application(request):
 
 
 def main():
-    run_simple('localhost', 8000, application)
     logging.info("listening to http://127.0.0.1:8000")
+    run_simple('localhost', 8000, application)
 
 
 if __name__ == '__main__':

@@ -67,6 +67,11 @@ class ConnectionState(Enum):
     REDIRECT = 3
 
 
+class RequestStatus(Enum):
+    GATEWAY_OK = 0
+    GATEWAY_DOWN = 1
+
+
 class LightReader(Thread):
 
     def __init__(self, conn, msg_queue):
@@ -97,7 +102,7 @@ class LightReader(Thread):
 
 def process_socket_fields(fields: Tuple[bytes]) -> None:
     if len(fields) == 0:
-        logger.debug("received empty message with no fields")
+        logger.info("received empty message with no fields")
         return
 
     message_type = Incoming(int(fields[0]))
@@ -126,6 +131,7 @@ class LightIBrokerClient(object):
     # TODO: support redirect !!
 
     def __init__(self, host: str, port: int, client_id: int):
+        self._socket = None
         self.host = host
         self.port = port
         self.client_id = client_id
@@ -153,7 +159,7 @@ class LightIBrokerClient(object):
 
     def send_msg(self, text: str) -> int:
         full_msg = lightcomm.make_msg(text)
-        logger.debug("sending %s %s", current_fn_name(1), full_msg)
+        logger.info("sending %s %s", current_fn_name(1), full_msg)
         return self._socket.send_msg(full_msg)
 
     @staticmethod
@@ -186,7 +192,7 @@ class LightIBrokerClient(object):
 
             self._socket = LightConnection(self.host, self.port)
 
-            self._socket.connect()
+            self._socket.connect(timeout=180)
             self.set_conn_state(ConnectionState.CONNECTING)
 
             # TODO: support async mode
@@ -202,7 +208,10 @@ class LightIBrokerClient(object):
             fields = []
 
             # sometimes I get news before the server version, thus the loop
+            count = 0
             while len(fields) != 2:
+                count +=1
+                logging.info('iteration {}'.format(count))
                 process_socket_fields(fields)
                 buf = self._socket.recv_msg()
                 logger.debug("ANSWER %s", buf)
@@ -302,10 +311,10 @@ class LightIBrokerClient(object):
         """Returns the time the API application made a connection to TWS."""
         return self.conn_time
 
-    def request_ibroker(self, command: Outgoing, args: OrderedDict) -> int:
+    def request_ibroker(self, command: Outgoing, args: OrderedDict) -> RequestStatus:
         if not self.is_connected():
             self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return -1
+            return RequestStatus.DOWN
 
         logger.info("REQUEST {} {}".format(command.name, args))
 
@@ -314,15 +323,17 @@ class LightIBrokerClient(object):
         if sent_bytes <= 0:
             logger.error('server error: failed to connect')
 
+        return RequestStatus.OK
+
     ##########################################################################
 
-    def start_api(self):
+    def start_api(self) -> RequestStatus:
         """  Initiates the message exchange between the client application and
         the TWS/IB Gateway. """
-        self.request_ibroker(Outgoing.START_API,
+        return self.request_ibroker(Outgoing.START_API,
                              OrderedDict(version=2, client_id=self.client_id, opt_capab=self.opt_capab))
 
-    def req_market_data_type(self, market_data_type: int):
+    def req_market_data_type(self, market_data_type: int) -> RequestStatus:
         """The API can receive frozen market data from Trader
         Workstation. Frozen market data is the last data recorded in our system.
         During normal trading hours, the API receives real-time market data. If
@@ -333,10 +344,10 @@ class LightIBrokerClient(object):
 
         marketDataType:int - 1 for real-time streaming market data or 2 for
             frozen market data"""
-        self.request_ibroker(Outgoing.REQ_MARKET_DATA_TYPE, OrderedDict(version=1, market_data_type=market_data_type))
+        return self.request_ibroker(Outgoing.REQ_MARKET_DATA_TYPE, OrderedDict(version=1, market_data_type=market_data_type))
 
     def req_market_data(self, req_id: TickerId, contract: Contract, generic_tick_list: str, snapshot: bool,
-                        regulatory_snapshot: bool):
+                        regulatory_snapshot: bool) -> RequestStatus:
         """Call this function to request market data. The market data
         will be returned by the tickPrice and tickSize events.
 
@@ -397,31 +408,31 @@ class LightIBrokerClient(object):
         fields['snapshot'] = snapshot
         fields['regulatory_snapshot'] = regulatory_snapshot
         fields['mkt_data_options_str'] = ''
-        self.request_ibroker(Outgoing.REQ_MKT_DATA, fields)
+        return self.request_ibroker(Outgoing.REQ_MKT_DATA, fields)
 
-    def set_server_log_level(self, log_level: int):
+    def set_server_log_level(self, log_level: int) -> RequestStatus:
         """The default detail level is ERROR. For more details, see API
         Logging."""
-        self.request_ibroker(Outgoing.SET_SERVER_LOGLEVEL, OrderedDict(version=1, log_level=log_level))
+        return self.request_ibroker(Outgoing.SET_SERVER_LOGLEVEL, OrderedDict(version=1, log_level=log_level))
 
-    def req_current_time(self):
+    def req_current_time(self) -> RequestStatus:
         """Asks the current system time on the server side."""
-        self.request_ibroker(Outgoing.REQ_CURRENT_TIME, OrderedDict(version=1))
+        return self.request_ibroker(Outgoing.REQ_CURRENT_TIME, OrderedDict(version=1))
 
-    def cancel_market_data(self, req_id: TickerId):
+    def cancel_market_data(self, req_id: TickerId) -> RequestStatus:
         """After calling this function, market data for the specified id
         will stop flowing.
 
         reqId: TickerId - The ID that was specified in the call to
             reqMktData(). """
-        self.request_ibroker(Outgoing.CANCEL_MKT_DATA, OrderedDict(version=2, req_id=req_id))
+        return self.request_ibroker(Outgoing.CANCEL_MKT_DATA, OrderedDict(version=2, req_id=req_id))
 
-    def req_market_rule(self, market_rule_id: int):
-        self.request_ibroker(Outgoing.REQ_MARKET_RULE, OrderedDict(market_rule_id=market_rule_id))
+    def req_market_rule(self, market_rule_id: int) -> RequestStatus:
+        return self.request_ibroker(Outgoing.REQ_MARKET_RULE, OrderedDict(market_rule_id=market_rule_id))
 
     def req_tick_by_tick_data(self, req_id: int, contract: Contract, tick_type: str, ticks_count: int,
-                              ignore_size: bool):
-        self.request_ibroker(Outgoing.REQ_TICK_BY_TICK_DATA,
+                              ignore_size: bool) -> RequestStatus:
+        return self.request_ibroker(Outgoing.REQ_TICK_BY_TICK_DATA,
                              OrderedDict(req_id=req_id,
                                          con_id=contract.con_id,
                                          symbol=contract.symbol,
@@ -441,10 +452,10 @@ class LightIBrokerClient(object):
                                          )
                              )
 
-    def cancel_tick_by_tick_data(self, req_id: int):
-        self.request_ibroker(Outgoing.CANCEL_TICK_BY_TICK_DATA, OrderedDict(req_id=req_id))
+    def cancel_tick_by_tick_data(self, req_id: int) -> RequestStatus:
+        return self.request_ibroker(Outgoing.CANCEL_TICK_BY_TICK_DATA, OrderedDict(req_id=req_id))
 
-    def req_contract_details(self, req_id: int, contract: Contract):
+    def req_contract_details(self, req_id: int, contract: Contract) -> RequestStatus:
         """Call this function to download all details for a particular
         underlying. The contract details will be received via the contractDetails()
         function on the EWrapper.
@@ -454,7 +465,7 @@ class LightIBrokerClient(object):
         contract:Contract - The summary description of the contract being looked
             up."""
 
-        self.request_ibroker(Outgoing.REQ_CONTRACT_DATA,
+        return self.request_ibroker(Outgoing.REQ_CONTRACT_DATA,
                              OrderedDict(version=8,
                                          req_id=req_id,
                                          con_id=contract.con_id,
@@ -475,7 +486,7 @@ class LightIBrokerClient(object):
                                          )
                              )
 
-    def req_account_updates(self, subscribe: bool, account_code: str):
+    def req_account_updates(self, subscribe: bool, account_code: str) -> RequestStatus:
         """Call this function to start getting account values, portfolio,
         and last update time information via EWrapper.updateAccountValue(),
         EWrapperi.updatePortfolio() and Wrapper.updateAccountTime().
@@ -485,10 +496,10 @@ class LightIBrokerClient(object):
             receiving this information.
         acctCode:str -The account code for which to receive account and
             portfolio updates."""
-        self.request_ibroker(Outgoing.REQ_ACCT_DATA,
+        return self.request_ibroker(Outgoing.REQ_ACCT_DATA,
                              OrderedDict(version=2, subscribe=subscribe, account_code=account_code))
 
-    def req_account_summary(self, req_id: int, group_name: str, tags: str):
+    def req_account_summary(self, req_id: int, group_name: str, tags: str) -> RequestStatus:
         """Call this method to request and keep up to date the data that appears
         on the TWS Account Window Summary tab. The data is returned by
         accountSummary().
@@ -542,45 +553,45 @@ class LightIBrokerClient(object):
                 the specified currency.
             $LEDGER:ALL - Single flag to relay all cash balance tags* in all
             currencies."""
-        self.request_ibroker(Outgoing.REQ_ACCOUNT_SUMMARY,
+        return self.request_ibroker(Outgoing.REQ_ACCOUNT_SUMMARY,
                              OrderedDict(version=1, req_id=req_id, group_name=group_name, tags=tags))
 
-    def cancel_account_summary(self, req_id: int):
+    def cancel_account_summary(self, req_id: int) -> RequestStatus:
         """Cancels the request for Account Window Summary tab data.
 
         reqId:int - The ID of the data request being canceled."""
-        self.request_ibroker(Outgoing.CANCEL_ACCOUNT_SUMMARY, OrderedDict(version=1, req_id=req_id))
+        return self.request_ibroker(Outgoing.CANCEL_ACCOUNT_SUMMARY, OrderedDict(version=1, req_id=req_id))
 
-    def req_positions(self):
+    def req_positions(self) -> RequestStatus:
         """Requests real-time position data for all accounts."""
-        self.request_ibroker(Outgoing.REQ_POSITIONS, OrderedDict(version=1))
+        return self.request_ibroker(Outgoing.REQ_POSITIONS, OrderedDict(version=1))
 
-    def cancel_positions(self):
+    def cancel_positions(self) -> RequestStatus:
         """Cancels real-time position updates."""
-        self.request_ibroker(Outgoing.CANCEL_POSITIONS, OrderedDict(version=1))
+        return self.request_ibroker(Outgoing.CANCEL_POSITIONS, OrderedDict(version=1))
 
-    def req_positions_multi(self, req_id: int, account: str, model_code: str):
+    def req_positions_multi(self, req_id: int, account: str, model_code: str) -> RequestStatus:
         """Requests positions for account and/or model.
         Results are delivered via EWrapper.positionMulti() and
         EWrapper.positionMultiEnd() """
-        self.request_ibroker(Outgoing.REQ_POSITIONS_MULTI,
+        return self.request_ibroker(Outgoing.REQ_POSITIONS_MULTI,
                              OrderedDict(version=1, req_id=req_id, account=account, model_code=model_code))
 
-    def cancel_positions_multi(self, req_id: int):
-        self.request_ibroker(Outgoing.CANCEL_POSITIONS_MULTI, OrderedDict(version=1, req_id=req_id))
+    def cancel_positions_multi(self, req_id: int) -> RequestStatus:
+        return self.request_ibroker(Outgoing.CANCEL_POSITIONS_MULTI, OrderedDict(version=1, req_id=req_id))
 
-    def req_account_updates_multi(self, req_id: int, account: str, model_code: str, ledger_and_nlv: bool):
+    def req_account_updates_multi(self, req_id: int, account: str, model_code: str, ledger_and_nlv: bool) -> RequestStatus:
         """Requests account updates for account and/or model."""
-        self.request_ibroker(Outgoing.REQ_ACCOUNT_UPDATES_MULTI,
+        return self.request_ibroker(Outgoing.REQ_ACCOUNT_UPDATES_MULTI,
                              OrderedDict(version=1, req_id=req_id, account=account, model_code=model_code,
                                          ledger_and_nlv=ledger_and_nlv))
 
-    def cancel_account_updates_multi(self, req_id: int):
-        self.request_ibroker(Outgoing.CANCEL_ACCOUNT_UPDATES_MULTI, OrderedDict(version=1, req_id=req_id))
+    def cancel_account_updates_multi(self, req_id: int) -> RequestStatus:
+        return self.request_ibroker(Outgoing.CANCEL_ACCOUNT_UPDATES_MULTI, OrderedDict(version=1, req_id=req_id))
 
     def req_historical_data(self, req_id: TickerId, contract: Contract, end_date_time: str,
                             duration_str: str, bar_size_setting: str, what_to_show: str,
-                            use_rth: int, format_date: int, keep_up_to_date: bool, chart_options: TagValueList):
+                            use_rth: int, format_date: int, keep_up_to_date: bool, chart_options: TagValueList) -> RequestStatus:
         """Requests contracts' historical data. When requesting historical data, a
         finishing time and date is required along with a duration string. The
         resulting bars will be returned in EWrapper.historicalData()
@@ -674,20 +685,20 @@ class LightIBrokerClient(object):
                 chart_options_str += str(tagValue)
 
         fields['chart_options'] = chart_options_str
-        self.request_ibroker(Outgoing.REQ_HISTORICAL_DATA, fields)
+        return self.request_ibroker(Outgoing.REQ_HISTORICAL_DATA, fields)
 
-    def cancel_historical_data(self, req_id: TickerId):
+    def cancel_historical_data(self, req_id: TickerId) -> RequestStatus:
         """Used if an internet disconnect has occurred or the results of a query
         are otherwise delayed and the application is no longer interested in receiving
         the data.
 
         reqId:TickerId - The ticker ID. Must be a unique value."""
-        self.request_ibroker(Outgoing.CANCEL_HISTORICAL_DATA, OrderedDict(version=1, req_id=req_id))
+        return self.request_ibroker(Outgoing.CANCEL_HISTORICAL_DATA, OrderedDict(version=1, req_id=req_id))
 
     # Note that formatData parameter affects intraday bars only
     # 1-day bars always return with date in YYYYMMDD format
     def req_head_timestamp(self, req_id: TickerId, contract: Contract, what_to_show: str, use_rth: int,
-                           format_date: int):
+                           format_date: int) -> RequestStatus:
         fields = OrderedDict(req_id=req_id,
                              con_id=contract.con_id,
                              symbol=contract.symbol,
@@ -706,13 +717,13 @@ class LightIBrokerClient(object):
                              what_to_show=what_to_show,
                              format_date=format_date
                              )
-        self.request_ibroker(Outgoing.REQ_HEAD_TIMESTAMP, fields)
+        return self.request_ibroker(Outgoing.REQ_HEAD_TIMESTAMP, fields)
 
-    def cancel_head_timestamp(self, req_id: TickerId):
-        self.request_ibroker(Outgoing.CANCEL_HEAD_TIMESTAMP, OrderedDict(req_id=req_id))
+    def cancel_head_timestamp(self, req_id: TickerId) -> RequestStatus:
+        return self.request_ibroker(Outgoing.CANCEL_HEAD_TIMESTAMP, OrderedDict(req_id=req_id))
 
-    def req_histogram_data(self, ticker_id: int, contract: Contract, use_rth: bool, time_period: str):
-        self.request_ibroker(Outgoing.REQ_HISTOGRAM_DATA,
+    def req_histogram_data(self, ticker_id: int, contract: Contract, use_rth: bool, time_period: str) -> RequestStatus:
+        return self.request_ibroker(Outgoing.REQ_HISTOGRAM_DATA,
                              OrderedDict(ticker_id=ticker_id,
                                          con_id=contract.con_id,
                                          symbol=contract.symbol,
@@ -732,12 +743,12 @@ class LightIBrokerClient(object):
                                          )
                              )
 
-    def cancelHistogramData(self, ticker_id: int):
-        self.request_ibroker(Outgoing.CANCEL_HISTOGRAM_DATA, OrderedDict(ticker_id=ticker_id))
+    def cancelHistogramData(self, ticker_id: int) -> RequestStatus:
+        return self.request_ibroker(Outgoing.CANCEL_HISTOGRAM_DATA, OrderedDict(ticker_id=ticker_id))
 
     def req_historical_ticks(self, req_id: int, contract: Contract, start_date_time: str,
                              end_date_time: str, number_of_ticks: int, what_to_show: str, use_rth: int,
-                             ignore_size: bool, misc_options: TagValueList):
+                             ignore_size: bool, misc_options: TagValueList) -> RequestStatus:
 
         fields = OrderedDict(req_id=req_id,
                              con_id=contract.con_id,
@@ -767,7 +778,7 @@ class LightIBrokerClient(object):
                 misc_options_string += str(tagValue)
 
         fields['misc_options'] = misc_options_string
-        self.request_ibroker(Outgoing.REQ_HISTORICAL_TICKS, fields)
+        return self.request_ibroker(Outgoing.REQ_HISTORICAL_TICKS, fields)
 
     ##########################################################################
     ##########################################################################

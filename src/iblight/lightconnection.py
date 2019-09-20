@@ -25,12 +25,7 @@ class CodeMsgPair:
 
 NO_VALID_ID = -1
 
-CONNECT_FAIL = CodeMsgPair(502,
-                           """Couldn't connect to TWS. Confirm that \"Enable ActiveX and Socket EClients\" 
-is enabled and connection port is the same as \"Socket Port\" on the 
-TWS \"Edit->Global Configuration...->API->Settings\" menu. Live Trading ports: 
-TWS: 7496; IB Gateway: 4001. Simulated Trading ports for new installations 
-of version 954.1 or newer:  TWS: 7497; IB Gateway: 4002""")
+CONNECT_FAIL = CodeMsgPair(502, "could not establish connection to Gateway")
 UPDATE_TWS = CodeMsgPair(503, "The TWS is out of date and must be upgraded.")
 NOT_CONNECTED = CodeMsgPair(504, "Not connected")
 BAD_LENGTH = CodeMsgPair(507, "Bad message length")
@@ -55,7 +50,7 @@ class LightConnection(object):
         self._wrapper = None  # PROBABLY not used
         self._lock = threading.Lock()
 
-    def connect(self):
+    def connect(self, timeout=3):
         try:
             self._socket = socket.socket()
         # TODO: list the exceptions you want to catch
@@ -69,7 +64,7 @@ class LightConnection(object):
             if self._wrapper:
                 self._wrapper.error(NO_VALID_ID, CONNECT_FAIL.code(), CONNECT_FAIL.msg())
 
-        self._socket.settimeout(1)  # non-blocking
+        self._socket.settimeout(timeout)  # non-blocking
 
     def disconnect(self):
         self._lock.acquire()
@@ -111,14 +106,13 @@ class LightConnection(object):
 
     def recv_msg(self):
         if not self.is_connected():
-            logger.debug("recvMsg attempted while not connected, releasing lock")
-            return b""
+            raise ConnectionError('no connection to IBroker server')
         try:
             buf = self._recv_all_msg()
             # receiving 0 bytes outside a timeout means the connection is either
             # closed or broken
             if len(buf) == 0:
-                logger.debug("socket either closed or broken, disconnecting")
+                logger.info("socket either closed or broken, disconnecting")
                 self.disconnect()
         except socket.timeout:
             logger.debug("socket timeout from recvMsg %s", sys.exc_info())
