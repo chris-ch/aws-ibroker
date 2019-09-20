@@ -12,119 +12,126 @@ from iblight.model.schema import ContractSchema
 
 logger = logging.getLogger(__name__)
 
-_ibroker_client = None
-
-_host, _port, _client_id = None, None, None
+_ibroker_gateway = None
 
 
-def set_ibroker_params(host: str, port: int, client_id: int):
-    global _host
-    global _port
-    global _client_id
-    _host, _port, _client_id = host, port, client_id
+def connect_ibroker_gateway(host: str, port: int, client_id: int):
+    if None in (host, port, client_id):
+        raise ConnectionRefusedError('Programming error: IBroker connection not initialized'
+                                     + ' - needs to set all parameters with '
+                                     + 'set_ibroker_params(host: str, port: int, client_id: int)')
+
+    ibroker_client = LightIBrokerClient(host, port, client_id)
+    ibroker_client.connect()
+
+    # This is BLOCKING: should it be running in some other thread???
+
+    def run_ibroker():
+        ibroker_client.run()  # starts sending back notifications from IBroker TWS
+
+    ib_client_thread = threading.Thread(target=run_ibroker)
+    ib_client_thread.start()
+
+    return ibroker_client
 
 
-def get_ibroker_client():
-    global _ibroker_client
-    global _host
-    global _port
-    global _client_id
-    if _ibroker_client is None:
-        if None in (_host, _port, _client_id):
-            raise ConnectionRefusedError('Programming error: IBroker connection not initialized'
-                                         + ' - needs to set all parameters with '
-                                         + 'set_ibroker_params(host: str, port: int, client_id: int)')
+def market_data_start_handler(ibroker_gateway: LightIBrokerClient):
+    def market_data_start(req_id: int):
+        contract = Contract()
+        contract.symbol = 'AAPL'
+        contract.sec_type = 'STK'
+        contract.exchange = 'SMART'
+        contract.currency = 'USD'
+        contract.primary_exchange = 'NASDAQ'
+        ibroker_gateway.req_market_data(req_id, contract, '', False, False)
+        return {'status-code': 'OK'}
 
-        _ibroker_client = LightIBrokerClient(_host, _port, _client_id)
-        _ibroker_client.connect()
-
-        # This is BLOCKING: should it be running in some other thread???
-
-        def run_ibroker():
-            _ibroker_client.run()  # starts sending back notifications from IBroker TWS
-
-        ib_client_thread = threading.Thread(target=run_ibroker)
-        ib_client_thread.start()
-
-    return _ibroker_client
+    return market_data_start
 
 
-def market_data_start(req_id: int):
-    contract = Contract()
-    contract.symbol = 'AAPL'
-    contract.sec_type = 'STK'
-    contract.exchange = 'SMART'
-    contract.currency = 'USD'
-    contract.primary_exchange = 'NASDAQ'
-    get_ibroker_client().req_market_data(req_id, contract, '', False, False)
-    return {'status-code': 'OK'}
+def market_data_stop_handler(ibroker_gateway: LightIBrokerClient):
+    def market_data_stop(req_id: int):
+        ibroker_gateway.cancel_market_data(req_id)
+        return {'status-code': 'OK'}
+
+    return market_data_stop
 
 
-def market_data_stop(req_id: int):
-    get_ibroker_client().cancel_market_data(req_id)
-    return {'status-code': 'OK'}
+def portfolio_positions_handler(ibroker_gateway: LightIBrokerClient):
+    def portfolio_positions():
+        ibroker_gateway.req_positions()
+        return {'status-code': 'OK'}
+
+    return portfolio_positions
 
 
-def portfolio_positions():
-    get_ibroker_client().req_positions()
-    return {'status-code': 'OK'}
+def market_data_type_handler(ibroker_gateway: LightIBrokerClient):
+    def market_data_type(data_type_id: int):
+        ibroker_gateway.req_market_data_type(data_type_id)  # 4 = switch to delayed frozen data if live is not available
+        return {'status-code': 'OK'}
+
+    return market_data_type
 
 
-def market_data_type(data_type_id: int):
-    get_ibroker_client().req_market_data_type(
-        data_type_id)  # 4 = switch to delayed frozen data if live is not available
-    return {'status-code': 'OK'}
+def account_start_handler(ibroker_gateway: LightIBrokerClient):
+    def account_start(req_id: int, group_name: str, tags: str):
+        """
+        Starts sending account summary notifications.
+        @param req_id request id
+        @param group_name the group name, such as "All"
+        @param tags the fields, such as "NetLiquidation"
+        @return a status
+        """
+        ibroker_gateway.req_account_summary(req_id=req_id, group_name=group_name, tags=tags)
+        return {'status-code': 'OK'}
+
+    return account_start
 
 
-def account_start(req_id: int, group_name: str, tags: str):
-    """
-    Starts sending account summary notifications.
-    @param req_id request id
-    @param group_name the group name, such as "All"
-    @param tags the fields, such as "NetLiquidation"
-    @return a status
-    """
-    get_ibroker_client().req_account_summary(req_id=req_id, group_name=group_name, tags=tags)
-    return {'status-code': 'OK'}
+def account_stop_handler(ibroker_gateway: LightIBrokerClient):
+    def account_stop(req_id: int):
+        """
+        Stops sending account summary notifications.
+        @param req_id request id
+        :param req_id:
+        :return:
+        """
+        ibroker_gateway.cancel_account_summary(req_id)
+        return {'status-code': 'OK'}
+
+    return account_stop
 
 
-def account_stop(req_id: int):
-    """
-    Stops sending account summary notifications.
-    @param req_id request id
-    :param req_id:
-    :return:
-    """
-    get_ibroker_client().cancel_account_summary(req_id)
-    return {'status-code': 'OK'}
+def load_contract_details_handler(ibroker_gateway: LightIBrokerClient):
+    def load_contract_details(req_id: int, contract: dict):
+        contract_model = ContractSchema().load(contract)
+        ibroker_gateway.req_contract_details(req_id=req_id, contract=contract_model)
+        return {'status-code': 'OK'}
 
-
-def load_contract_details(req_id: int, contract: dict):
-    contract_model = ContractSchema().load(contract)
-    get_ibroker_client().req_contract_details(req_id=req_id, contract=contract_model)
-    return {'status-code': 'OK'}
+    return load_contract_details
 
 
 @Request.application
 def application(request):
     # Dispatcher is dictionary {<method_name>: callable}
-    dispatcher["account-start"] = account_start
-    dispatcher["account-stop"] = account_stop
-    dispatcher["market-data-type"] = market_data_type
-    dispatcher["market-data-start"] = market_data_start
-    dispatcher["market-data-stop"] = market_data_stop
-    dispatcher["portfolio-positions"] = portfolio_positions
-    dispatcher["load-contract-details"] = load_contract_details
+    global _ibroker_gateway
+    if not _ibroker_gateway:
+        _ibroker_gateway = connect_ibroker_gateway('127.0.0.1', 4003, 0)
+
+    dispatcher["account-start"] = account_start_handler(_ibroker_gateway)
+    dispatcher["account-stop"] = account_stop_handler(_ibroker_gateway)
+    dispatcher["market-data-type"] = market_data_type_handler(_ibroker_gateway)
+    dispatcher["market-data-start"] = market_data_start_handler(_ibroker_gateway)
+    dispatcher["market-data-stop"] = market_data_stop_handler(_ibroker_gateway)
+    dispatcher["portfolio-positions"] = portfolio_positions_handler(_ibroker_gateway)
+    dispatcher["load-contract-details"] = load_contract_details_handler(_ibroker_gateway)
     response = JSONRPCResponseManager.handle(request.data, dispatcher)
     return Response(response.json, mimetype='application/json')
 
 
 def main():
-    set_ibroker_params('127.0.0.1', 4003, 0)
-
-    logging.info("listening to http://127.0.0.1:8000")
-
     run_simple('localhost', 8000, application)
+    logging.info("listening to http://127.0.0.1:8000")
 
 
 if __name__ == '__main__':

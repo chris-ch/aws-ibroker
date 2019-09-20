@@ -75,7 +75,7 @@ class LightConnection(object):
         self._lock.acquire()
         try:
             if self._socket is not None:
-                logger.debug("disconnecting")
+                logger.debug("interrupting connection")
                 self._socket.close()
                 self._socket = None
                 logger.debug("disconnected")

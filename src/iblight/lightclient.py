@@ -242,7 +242,7 @@ class LightIBrokerClient(object):
 
         self.set_conn_state(ConnectionState.DISCONNECTED)
         if self._socket is not None:
-            logger.info("disconnecting")
+            logger.info("disconnecting client")
             self._socket.disconnect()
             self.event_handler.connection_closed()
             self.reset()
@@ -265,16 +265,14 @@ class LightIBrokerClient(object):
 
     def run(self):
         """This is the function that has the message loop."""
-
         try:
-            while not self.done and (self.is_connected()
-                                     or not self.msg_queue.empty()):
+            while not self.done and (self.is_connected() or not self.msg_queue.empty()):
                 try:
                     try:
                         text = self.msg_queue.get(block=True, timeout=0.2)
                         if len(text) > MAX_MSG_LEN:
-                            self.event_handler.error(NO_VALID_ID, BAD_LENGTH.code(),
-                                                     "%s:%d:%s" % (BAD_LENGTH.msg(), len(text), text))
+                            logger.error('disconnecting: bad message length')
+                            self.event_handler.error(NO_VALID_ID, BAD_LENGTH.code(), "%s:%d:%s" % (BAD_LENGTH.msg(), len(text), text))
                             self.disconnect()
                             break
                     except queue.Empty:
@@ -292,6 +290,7 @@ class LightIBrokerClient(object):
                              self.is_connected(),
                              self.msg_queue.qsize())
         finally:
+            logger.info('interrupt received')
             self.disconnect()
 
     def server_version(self):
