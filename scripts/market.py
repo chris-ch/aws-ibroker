@@ -24,15 +24,12 @@ def connect_ibroker_gateway(host: str, port: int, client_id: int):
     logger.info('launching IBroker client')
     ibroker_client = LightIBrokerClient(host, port, client_id)
     ibroker_client.connect()
-    #ibroker_client.run()
-    # This is BLOCKING: should it be running in some other thread???
 
     def run_ibroker():
         ibroker_client.run()  # starts sending back notifications from IBroker TWS
 
     ib_client_thread = threading.Thread(target=run_ibroker)
     ib_client_thread.start()
-
     return ibroker_client
 
 

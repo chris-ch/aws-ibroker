@@ -115,7 +115,7 @@ class LightConnection(object):
                 logger.info("socket either closed or broken, disconnecting")
                 self.disconnect()
         except socket.timeout:
-            logger.debug("socket timeout from recvMsg %s", sys.exc_info())
+            logger.info("socket timeout from recv_msg %s", sys.exc_info())
             buf = b""
         else:
             pass

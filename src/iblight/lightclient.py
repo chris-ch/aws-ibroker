@@ -6,6 +6,9 @@ import logging
 import queue
 import socket
 import sys
+import json
+import redis
+
 from collections import OrderedDict
 from enum import Enum
 from threading import Thread
@@ -17,6 +20,7 @@ from iblight import lightcomm
 from iblight.lightcomm import make_field, make_field_handle_empty, UNSET_DOUBLE, UNSET_INTEGER
 from iblight.lightconnection import LightConnection, NO_VALID_ID, NOT_CONNECTED, CONNECT_FAIL, BAD_MESSAGE, UPDATE_TWS, \
     BAD_LENGTH
+from iblight.lightdecoder import ib_decode
 from iblight.model import Contract, ScannerSubscription
 from iblight.refibroker import Incoming, Outgoing
 
@@ -70,6 +74,7 @@ class ConnectionState(Enum):
 class RequestStatus(Enum):
     GATEWAY_OK = 0
     GATEWAY_DOWN = 1
+    IBROKER_DOWN = 2
 
 
 class LightReader(Thread):
@@ -100,16 +105,10 @@ class LightReader(Thread):
         logger.debug("LightReader thread finished")
 
 
-def process_socket_fields(fields: Tuple[bytes]) -> None:
-    if len(fields) == 0:
-        logger.info("received empty message with no fields")
-        return
-
-    message_type = Incoming(int(fields[0]))
-    logger.info('received msg id {} with fields: {}'.format(message_type.name, repr(fields[1:])))
-
-
 class IBrokerClientEventHandler(object):
+
+    def __init__(self):
+        self._redis = redis.Redis(host='localhost', port=6379, db=0)
 
     @staticmethod
     def connect_ack():
@@ -124,6 +123,16 @@ class IBrokerClientEventHandler(object):
         """This event is called when there is an error with the
         communication or when TWS wants to send a message to the client."""
         logger.error("ERROR %s %s %s", req_id, error_code, error_string)
+
+    def notify(self, fields: Tuple[bytes]) -> None:
+        if len(fields) == 0:
+            logger.info("received empty message with no fields")
+            return
+
+        message_type = Incoming(int(fields[0]))
+        data = ib_decode(message_type, fields[1:])
+        # TODO publish on redis
+        logger.info('received msg id {} with fields: {}'.format(message_type.name, json.dumps(data, indent=2)))
 
 
 class LightIBrokerClient(object):
@@ -212,7 +221,7 @@ class LightIBrokerClient(object):
             while len(fields) != 2:
                 count +=1
                 logging.info('iteration {}'.format(count))
-                process_socket_fields(fields)
+                self.event_handler.notify(fields)
                 buf = self._socket.recv_msg()
                 logger.debug("ANSWER %s", buf)
                 if len(buf) > 0:
@@ -289,7 +298,7 @@ class LightIBrokerClient(object):
                     else:
                         fields = lightcomm.read_fields(text)
                         logger.debug("fields %s", fields)
-                        process_socket_fields(fields)
+                        self.event_handler.notify(fields)
                 except (KeyboardInterrupt, SystemExit):
                     logger.info("detected KeyboardInterrupt, SystemExit")
                     self.keyboard_interrupt()
@@ -314,7 +323,7 @@ class LightIBrokerClient(object):
     def request_ibroker(self, command: Outgoing, args: OrderedDict) -> RequestStatus:
         if not self.is_connected():
             self.event_handler.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return RequestStatus.DOWN
+            return RequestStatus.GATEWAY_DOWN
 
         logger.info("REQUEST {} {}".format(command.name, args))
 
@@ -322,8 +331,9 @@ class LightIBrokerClient(object):
         sent_bytes = self.send_msg(msg)
         if sent_bytes <= 0:
             logger.error('server error: failed to connect')
+            return RequestStatus.IBROKER_DOWN
 
-        return RequestStatus.OK
+        return RequestStatus.GATEWAY_OK
 
     ##########################################################################
 
