@@ -2,7 +2,7 @@ version: '3.7'
 
 services:
   tws:
-    image: interactivebroker-gateway:v974
+    image: chris1204/interactivebroker-gateway
 
     env_file:
       - ./config/secrets.conf
