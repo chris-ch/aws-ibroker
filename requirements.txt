@@ -1,4 +1,4 @@
 Werkzeug==0.15.6
 marshmallow==3.0.5
 json-rpc==1.12.1
-redis==3.3.8
+redis==4.4.4
